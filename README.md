@@ -5,14 +5,13 @@ Este proyecto implementa un sistema de control de posición de lazo cerrado (ser
 ## Características Técnicas
 
 *   **Arquitectura RTOS:** Implementación basada en **FreeRTOS** con 6 tareas concurrentes que gestionan adquisición, control (PID), comunicación y seguridad.
-*   **Muestreo Determinístico:** Adquisición de datos mediante **I2C + DMA** disparado por hardware a través del **TIM1** (Update Event) a intervalos de 1ms.
+*   **Muestreo Determinístico:** Adquisición de datos mediante **I2C + DMA** disparado por hardware a través del **TIM** (Update Event) a intervalos de 1ms.
 *   **Lógica de Control:** Algoritmo **PID** de alta frecuencia para el posicionamiento preciso del motor.
-*   **Abstracción de Hardware (HAL):** Separación de la lógica de aplicación en `/App` y drivers en `/libs`, permitiendo la permutación entre diferentes MCUs mediante definiciones en el preprocesador.
+*   **Abstracción de Hardware (HAL):** Separación de la lógica de aplicación y drivers en `/libs`, permitiendo la permutación entre diferentes MCUs mediante definiciones en el preprocesador.
 *   **Interfaz USB-HID:** Telemetría y recepción de consignas en tiempo real desde una PC sin necesidad de drivers adicionales.
 
 ## Estructura del Repositorio
 
-*   **`/App`**: Lógica de las tareas de FreeRTOS, procesamiento de datos y algoritmos de control (Código agnóstico).
 *   **`/Boards`**: Contiene los proyectos específicos de **STM32CubeIDE** para cada placa de desarrollo.
     *   `/Bluepill_F103`: Configuración para el STM32F103C8.
     *   `/Discovery_F411`: Configuración para el STM32F411VE.
@@ -40,4 +39,6 @@ Este proyecto implementa un sistema de control de posición de lazo cerrado (ser
 
 1.  **Clonar el repositorio:**
     ```bash
-    git clone [https://github.com/JeielArguello/STM32-RTOS-Servo-Control.git](https://github.com/JeielArguello/STM32-RTOS-Servo-Control.git)
+    git clone https://github.com/JeielArguello/STM32-RTOS-Servo-Control.git
+
+   ```
