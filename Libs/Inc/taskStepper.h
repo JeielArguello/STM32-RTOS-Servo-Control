@@ -9,13 +9,10 @@
 #define TASKSTEPPER_H_
 
 #include "main.h"
-#include "tim.h"
-#include "Encoder_types.h"
+
 #include <stdlib.h>
 
 
-extern EncoderData_t sensor_data;
-extern Stepper_Handler motor;
 
 void AppInit(void * pvParameters);
 

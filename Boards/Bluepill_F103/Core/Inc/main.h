@@ -33,9 +33,11 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 #include "FreeRTOS.h"
 #include "task.h"
+#include "tim.h"
 #include "semphr.h"
-#include "stepper.h"
 #include "queue.h"
+#include "Encoder_types.h"
+#include "stepper.h"
 #include "taskStepper.h"
 /* USER CODE END Includes */
 
