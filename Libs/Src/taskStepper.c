@@ -30,13 +30,12 @@ QueueHandle_t Queue3_PosHandle = NULL;    // Control -> Driver (Pasos/Velocidad)
 SemaphoreHandle_t Sem1_HID_RxHandle = NULL;  // ISR USB -> InputHIDTask
 SemaphoreHandle_t Sem2_DMA_RxHandle = NULL;  // ISR DMA -> SensorTask
 SemaphoreHandle_t Sem3_Mutex_Sensor = NULL; // Mutex del sensor
-SemaphoreHandle_t Sem4_Mutex_Report = NULL;
+SemaphoreHandle_t Sem4_Mutex_Report = NULL; // Mutex del report
 
 static void UpdateHIDData(int32_t pos, uint32_t vel){
 
 	  // 1. Tomar mutex de reporte
-	  if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
-
+	  if(xSemaphoreTake(Sem4_Mutex_Report, portMAX_DELAY) == pdPASS) {
 
 			// 2. Cargamos los datos en la estructura global del reporte
 			// Esta es la HID_Report_t empaquetada que definimos al inicio
@@ -44,8 +43,7 @@ static void UpdateHIDData(int32_t pos, uint32_t vel){
 			report_send.position = pos;
 			report_send.velocity = vel;
 			// 3. Liberar Mutex rápido
-			xSemaphoreGive(Sem3_Mutex_Sensor);
-
+			xSemaphoreGive(Sem4_Mutex_Report);
 
 	  }
 }
@@ -90,6 +88,8 @@ void AppInit(void * pvParameters){
 	if(Sem3_Mutex_Sensor == NULL) {
 		HAL_Delay(1000);
 	}
+
+	CUSTOM_HID_Init_FS();
 
 	xTaskCreate(StartDriverTask, "DriverTask", 100, NULL, 4, NULL);
 	xTaskCreate(StartSensorTask, "SensorTask", 100, NULL, 4, NULL);
@@ -166,15 +166,11 @@ void StartSensorTask(void *argument) {
                 sensor_data.velocity_dps = (sensor_data.total_degrees - last_degrees) / dt;
                 last_degrees = sensor_data.total_degrees;
 
-                // 5. Actualizar Reporte USB (HID)
-                // Adaptamos a tu estructura de 10 bytes: pos (int32), vel (uint32), flags (uint8)
-                UpdateHIDData((int32_t)sensor_data.total_degrees,
-                             (uint32_t)sensor_data.velocity_dps);
-                // 6. Liberar Mutex rápido
+                // 5. Liberar Mutex rápido
                 xSemaphoreGive(Sem3_Mutex_Sensor);
 
 
-                // 7. Encolar copia de los datos para la ControlTask (PID)
+                // 6. Encolar copia de los datos para la ControlTask (PID)
                 xQueueSendToBack(Queue2_SensorHandle, (void*)&sensor_data, 0);
             }
         }
@@ -252,9 +248,8 @@ void StartOutputHIDTask(void *argument) {
 
 				// 3. Mapeo de datos del sensor al reporte HID
 				// Casteamos a los tipos que definimos en la struct empaquetada
-				reporte_salida.position = (int32_t)sensor_local.total_degrees;
-				reporte_salida.velocity = (uint32_t)sensor_local.velocity_dps;
-				reporte_salida.status_flags = sensor_local.status;
+        		 UpdateHIDData((int32_t)sensor_data.total_degrees,
+        		                             (uint32_t)sensor_data.velocity_dps);
 
 				// 4. Envío por USB
 				// El tamaño es sizeof(HID_Report_t), que debería ser 10
@@ -267,20 +262,29 @@ void StartOutputHIDTask(void *argument) {
 }
 
 void StartMonitorTask(void *argument) {
+    EncoderData_t sensor_local;
+    BaseType_t xStatus;
 
-	EncoderData_t* pvSensor = NULL;
-	BaseType_t xStatus;
-	TickType_t timeSleep = pdMS_TO_TICKS(2000);
+    // Definimos el período de monitoreo (ej. cada 500ms)
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xPeriod = pdMS_TO_TICKS(500);
 
-	for(;;){
-		xStatus = xQueueReceive( Queue2_SensorHandle, pvSensor, timeSleep);
-		if( xStatus == pdPASS )
-		{
+    for(;;) {
+        // 1. timeout de 0 (no bloqueante) porque queremos controlar el tiempo con vTaskDelayUntil
+        do {
+            xStatus = xQueueReceive(Queue2_SensorHandle, &sensor_local, 0);
+        } while(xStatus == pdPASS);
 
-    	}
+        // 2. Lógica de control/diagnóstico
+        if (sensor_local.status != 0) {
+            // activar un buzzer o reportar un error de hardware
+        }
 
-		HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
+        // 3. Heartbeat: Toggleamos el LED para indicar que el sistema está vivo
+        HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
 
+        // 4. Bloqueo preciso y determinístico de la tarea de monitoreo
+        vTaskDelayUntil(&xLastWakeTime, xPeriod);
     }
 }
 
