@@ -10,7 +10,7 @@
 
 #include "main.h"
 
-// --- Definiciones de Pines para el Driver ---
+// --- Definiciones de Pines ---
 #ifdef STM32F103xB  // Si es la Bluepill
 
 	#define GPIO_LED_Pin GPIO_PIN_13
@@ -58,7 +58,7 @@
 	#define ENCODER_I2C_INSTANCE I2C1
 	#define DRIVER_TIMER_HANDLE  htim2
 	#define DRIVER_TIMER_INSTANCE TIM2
-	#define DRIVER_TIMER_CHANNEL TIM_CHANNEL_2
+	#define DRIVER_TIMER_CHANNEL TIM_CHANNEL_1
 	#define SAMPLE_TIMER_HANDLE htim1
 #endif
 #endif
