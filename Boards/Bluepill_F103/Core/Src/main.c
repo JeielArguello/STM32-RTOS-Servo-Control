@@ -32,7 +32,7 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+extern USBD_HandleTypeDef hUsbDeviceFS;
 extern EncoderData_t sensor_data;
 extern Stepper_Handler motor;
 

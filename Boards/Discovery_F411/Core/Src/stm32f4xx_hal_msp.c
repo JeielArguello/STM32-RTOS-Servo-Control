@@ -77,6 +77,9 @@ void HAL_MspInit(void)
   /* PVD_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(PVD_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(PVD_IRQn);
+  /* RCC_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(RCC_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(RCC_IRQn);
 
   /* USER CODE BEGIN MspInit 1 */
 

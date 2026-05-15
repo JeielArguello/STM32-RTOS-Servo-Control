@@ -9,6 +9,7 @@
 #define TASKSTEPPER_H_
 
 #include "main.h"
+#include "board_config.h"
 
 #include <stdlib.h>
 

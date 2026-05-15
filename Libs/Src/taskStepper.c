@@ -6,11 +6,21 @@
  */
 
 #include "taskStepper.h"
+#include "usb_device.h"
+#include "usbd_custom_hid_if.h"
 
 
+typedef struct __attribute__((packed)) {
+    uint8_t reportID;     // ID del reporte HID
+    int32_t position;     // Posición actual del motor
+    uint32_t velocity;       // Velocidad calculada
+    uint8_t status_flags; // Errores, límites, etc.
+} HID_Report_t;
+
+//extern USBD_HandleTypeDef hUsbDeviceFS;
+HID_Report_t report_send = {0};
 EncoderData_t sensor_data = {0};
 Stepper_Handler motor = {0};
-//Message_Handler mensajeHID;
 
 /* Handles de Colas (Queues) */
 QueueHandle_t Queue1_ComHandle = NULL;    // PC -> Control (Consignas)
@@ -20,11 +30,12 @@ QueueHandle_t Queue3_PosHandle = NULL;    // Control -> Driver (Pasos/Velocidad)
 /* Handles de Semáforos */
 SemaphoreHandle_t Sem1_HID_RxHandle = NULL;  // ISR USB -> InputHIDTask
 SemaphoreHandle_t Sem2_DMA_RxHandle = NULL;  // ISR DMA -> SensorTask
+SemaphoreHandle_t Sem3_Mutex_Sensor = NULL;
 
 
 void AppInit(void * pvParameters){
 
-	HAL_TIM_Base_Start_IT(&htim1);
+	HAL_TIM_Base_Start_IT(&SAMPLE_TIMER_HANDLE);
 
 	Sem1_HID_RxHandle = xSemaphoreCreateBinary();
 	if(Sem1_HID_RxHandle  == NULL) {
@@ -57,6 +68,7 @@ void AppInit(void * pvParameters){
 		HAL_Delay(1000);
 	}
 
+	Sem3_Mutex_Sensor = xSemaphoreCreateMutex();
 
 	xTaskCreate(StartDriverTask, "DriverTask", 100, NULL, 4, NULL);
 	xTaskCreate(StartSensorTask, "SensorTask", 100, NULL, 4, NULL);
@@ -72,12 +84,13 @@ void AppInit(void * pvParameters){
 }
 
 
+
 void StartDriverTask(void *argument) {
 	// Inicialización del motor (usando tu nueva librería)
 	    motor.step = (Stepper_Pin){TIM2_STEP_GPIO_Port, TIM2_STEP_Pin};
 	    motor.dir  = (Stepper_Pin){GPIO_DIR_GPIO_Port, GPIO_DIR_Pin};
-	    motor.htim = &htim2;
-	    motor.channel = TIM_CHANNEL_2;
+	    motor.htim = &DRIVER_TIMER_HANDLE;
+	    motor.channel = DRIVER_TIMER_CHANNEL;
 	    motor.m0 = (Stepper_Pin){GPIO_M0_GPIO_Port, GPIO_M0_Pin};
 	    motor.m1 = (Stepper_Pin){GPIO_M1_GPIO_Port, GPIO_M1_Pin};
 	    motor.m2 = (Stepper_Pin){GPIO_M2_GPIO_Port, GPIO_M2_Pin};
@@ -100,39 +113,53 @@ void StartDriverTask(void *argument) {
 }
 
 void StartSensorTask(void *argument) {
-
     uint16_t last_raw = 0;
-
-    // El periodo de muestreo (ej: 10ms = 100Hz)
-    //TickType_t xLastWakeTime = xTaskGetTickCount();
-    //const TickType_t xFrequency = pdMS_TO_TICKS(1);
-
-
+    float last_degrees = 0.0f;
+    const float dt = 0.001f; // 1ms (frecuencia del TIM1)
 
     for(;;) {
-    	if(xSemaphoreTake(Sem2_DMA_RxHandle, portMAX_DELAY) == pdPASS) {
+        // 1. Esperar al DMA (Sincronizado con TIM1)
+        if(xSemaphoreTake(Sem2_DMA_RxHandle, portMAX_DELAY) == pdPASS) {
 
-    	// 1. Leer el encoder vía I2C
+            // 2. Procesar datos crudos fuera del mutex para minimizar latencia
+            uint16_t current_raw = ((uint16_t)sensor_data.buffer[0] << 8) | sensor_data.buffer[1];
+            int16_t diff = current_raw - last_raw;
 
-            sensor_data.raw_angle = ((uint16_t)sensor_data.buffer[0] << 8) | sensor_data.buffer[1];
-            // 2. Lógica de conteo de vueltas
-            int16_t diff = sensor_data.raw_angle - last_raw;
-            if (diff > 2048) sensor_data.rotations--;
-            else if (diff < -2048) sensor_data.rotations++;
+            // 3. Tomar Mutex para actualizar la estructura global
+            if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
 
-            last_raw = sensor_data.raw_angle;
+                sensor_data.raw_angle = current_raw;
 
-            // 3. Calcular ángulo acumulado
-            sensor_data.total_degrees = (sensor_data.rotations * 360.0f) + (sensor_data.raw_angle * 360.0f / 4096.0f);
+                // Lógica de conteo de vueltas
+                if (diff > 2048)  sensor_data.rotations--;
+                else if (diff < -2048) sensor_data.rotations++;
 
-            // 4. Encolar los datos
-            xQueueSendToBack(Queue2_SensorHandle, &sensor_data, 0);
+                last_raw = current_raw;
+
+                // Calcular posición total
+                sensor_data.total_degrees = (sensor_data.rotations * 360.0f) +
+                                            (sensor_data.raw_angle * 360.0f / 4096.0f);
+
+                // 4. Cálculo de Velocidad (Grados por segundo)
+                // v = (pos_actual - pos_anterior) / dt
+                sensor_data.velocity_dps = (sensor_data.total_degrees - last_degrees) / dt;
+                last_degrees = sensor_data.total_degrees;
+
+                // 5. Liberar Mutex rápido
+                xSemaphoreGive(Sem3_Mutex_Sensor);
+
+                // 6. Actualizar Reporte USB (HID)
+                // Adaptamos a tu estructura de 10 bytes: pos (int32), vel (uint32), flags (uint8)
+                UpdateHIDData((int32_t)sensor_data.total_degrees,
+                             (uint32_t)sensor_data.velocity_dps);
+
+                // 7. Encolar copia de los datos para la ControlTask (PID)
+                xQueueSendToBack(Queue2_SensorHandle, (void*)&sensor_data, 0);
+            }
         }
-
-        // Esperar de forma eficiente hasta el próximo ciclo
-       // vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
+
 
 void StartControlTask(void *argument) {
 
@@ -153,10 +180,35 @@ void StartControlTask(void *argument) {
 }
 
 void StartInputHIDTask(void *argument) {
+    // Buffer donde el stack USB deposita los datos
+    extern uint8_t USBD_CustomHID_fops_FS[];
+    extern USBD_HandleTypeDef hUsbDeviceFS;
 
+    HID_Report_t incoming_report;
 
-    for(;;){
+    for(;;) {
+        // 1. Esperar notificación del USB (Bloqueo eficiente)
+    	 if(xSemaphoreTake(Sem1_HID_RxHandle, portMAX_DELAY) == pdPASS) {
 
+			// 2. Obtener el puntero al buffer de recepción
+			USBD_CUSTOM_HID_HandleTypeDef *hhid = (USBD_CUSTOM_HID_HandleTypeDef*)hUsbDeviceFS.pClassData;
+
+			// 3. Copiar de forma segura los datos al reporte local
+			// hhid->Report_buf contiene el reporte recibido (incluyendo ID)
+			memcpy(&incoming_report, hhid->Report_buf, sizeof(HID_Report_t));
+
+			// 4. Procesar según el ID del reporte
+			if (incoming_report.reportID == 0x02) { // Reporte de consignas
+
+				// Ejemplo: El PC manda una nueva posición deseada
+				// Suponiendo que usas el campo 'position' como Setpoint
+				int32_t new_setpoint = incoming_report.position;
+
+				// 5. Enviar el nuevo Setpoint a la ControlTask
+				// Podés usar una Queue o una variable global protegida
+				xQueueSend(Queue_SetpointHandle, &new_setpoint, 0);
+			}
+        }
     }
 }
 
@@ -170,7 +222,7 @@ void StartOutputHIDTask(void *argument) {
     	xStatus = xQueueReceive( Queue2_SensorHandle, pvSensor, portMAX_DELAY);
     	if( xStatus == pdPASS )
     	{
-
+    		//USBD_CUSTOM_HID_SendReport()
     	}
     }
 }
@@ -197,7 +249,7 @@ void StartMonitorTask(void *argument) {
 /* ---------------------------------- CALLBACKS ----------------------------------*/
 
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim) {
-    if (htim->Instance == TIM2) {
+    if (htim->Instance == DRIVER_TIMER_INSTANCE) {
         if (motor.steps_to_move > 0) {
             uint32_t val = __HAL_TIM_GET_COMPARE(htim, motor.channel);
             __HAL_TIM_SET_COMPARE(htim, motor.channel, val + motor.period_ticks);
@@ -211,15 +263,13 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim) {
 }
 
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
-    if (hi2c->Instance == I2C1) {
+    if (hi2c->Instance == ENCODER_I2C_INSTANCE) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         // Despertamos a la Sensor_Task para que procese los datos
         xSemaphoreGiveFromISR(Sem2_DMA_RxHandle, &xHigherPriorityTaskWoken);
         portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 }
-
-
 
 
 

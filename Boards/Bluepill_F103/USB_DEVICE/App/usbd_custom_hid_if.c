@@ -90,10 +90,26 @@
 /** Usb HID report descriptor. */
 __ALIGN_BEGIN static uint8_t CUSTOM_HID_ReportDesc_FS[USBD_CUSTOM_HID_REPORT_DESC_SIZE] __ALIGN_END =
 {
-  /* USER CODE BEGIN 0 */
-  0x00,
-  /* USER CODE END 0 */
-  0xC0    /*     END_COLLECTION	             */
+  0x06, 0x00, 0xFF,    // USAGE_PAGE (Vendor Defined)
+  0x09, 0x01,          // USAGE (Vendor Usage 1)
+  0xA1, 0x01,          // COLLECTION (Application)
+
+  // --- Reporte de Entrada (Device -> PC) ---
+  0x85, 0x01,          // REPORT_ID (1)
+  0x09, 0x02,          // USAGE (Vendor Usage 2)
+  0x15, 0x00,          // LOGICAL_MINIMUM (0)
+  0x26, 0xFF, 0x00,    // LOGICAL_MAXIMUM (255)
+  0x75, 0x08,          // REPORT_SIZE (8 bits)
+  0x95, 0x09,          // REPORT_COUNT (9 bytes: 4 pos + 4 vel + 1 flags)
+  0x81, 0x02,          // INPUT (Data,Var,Abs)
+
+  // --- Reporte de Salida (PC -> Device) ---
+  0x85, 0x02,          // REPORT_ID (2)
+  0x09, 0x03,          // USAGE (Vendor Usage 3)
+  0x95, 0x09,          // REPORT_COUNT (9)
+  0x91, 0x02,          // OUTPUT (Data,Var,Abs)
+
+  0xC0                 // END_COLLECTION
 };
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
@@ -111,7 +127,7 @@ __ALIGN_BEGIN static uint8_t CUSTOM_HID_ReportDesc_FS[USBD_CUSTOM_HID_REPORT_DES
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
-
+extern SemaphoreHandle_t Sem2_DMA_RxHandle;
 /* USER CODE END EXPORTED_VARIABLES */
 /**
   * @}
@@ -152,6 +168,11 @@ USBD_CUSTOM_HID_ItfTypeDef USBD_CustomHID_fops_FS =
 static int8_t CUSTOM_HID_Init_FS(void)
 {
   /* USER CODE BEGIN 4 */
+ if (USBD_CUSTOM_HID_ReceivePacket(&hUsbDeviceFS) != (uint8_t)USBD_OK)
+	{
+
+	  return -1;
+	}
   return (USBD_OK);
   /* USER CODE END 4 */
 }
@@ -176,8 +197,13 @@ static int8_t CUSTOM_HID_DeInit_FS(void)
 static int8_t CUSTOM_HID_OutEvent_FS(uint8_t event_idx, uint8_t state)
 {
   /* USER CODE BEGIN 6 */
-  return (USBD_OK);
-  /* USER CODE END 6 */
+	 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	// Avisamos a la tarea que hay un nuevo reporte de salida (OUT)
+	// Despertamos a la Sensor_Task para que procese los datos
+	xSemaphoreGiveFromISR(Sem2_DMA_RxHandle, &xHigherPriorityTaskWoken);
+	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	return (USBD_OK);
+	/* USER CODE END 6 */
 }
 
 /* USER CODE BEGIN 7 */
