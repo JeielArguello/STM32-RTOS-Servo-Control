@@ -31,7 +31,8 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-
+/* USER CODE BEGIN EXPORTED_FUNCTIONS */
+uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev);
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -106,12 +107,14 @@ __ALIGN_BEGIN static uint8_t CUSTOM_HID_ReportDesc_FS[USBD_CUSTOM_HID_REPORT_DES
   // --- Reporte de Salida (PC -> Device) ---
   0x85, 0x02,          // REPORT_ID (2)
   0x09, 0x03,          // USAGE (Vendor Usage 3)
-  0x95, 0x09,          // REPORT_COUNT (9)
+  0x15, 0x00,          // LOGICAL_MINIMUM (0)        <-- Agregado por seguridad
+  0x26, 0xFF, 0x00,    // LOGICAL_MAXIMUM (255)      <-- Agregado por seguridad
+  0x75, 0x08,          // REPORT_SIZE (8 bits)       <-- ¡CRÍTICO: Faltaba este!
+  0x95, 0x09,          // REPORT_COUNT (9 bytes)
   0x91, 0x02,          // OUTPUT (Data,Var,Abs)
 
   0xC0                 // END_COLLECTION
 };
-
 /* USER CODE BEGIN PRIVATE_VARIABLES */
 
 /* USER CODE END PRIVATE_VARIABLES */
@@ -168,6 +171,7 @@ USBD_CUSTOM_HID_ItfTypeDef USBD_CustomHID_fops_FS =
 static int8_t CUSTOM_HID_Init_FS(void)
 {
   /* USER CODE BEGIN 4 */
+	USBD_CUSTOM_HID_ReceivePacket(&hUsbDeviceFS);
 
   return (USBD_OK);
   /* USER CODE END 4 */
@@ -193,6 +197,12 @@ static int8_t CUSTOM_HID_DeInit_FS(void)
 static int8_t CUSTOM_HID_OutEvent_FS(uint8_t event_idx, uint8_t state)
 {
   /* USER CODE BEGIN 6 */
+	  USBD_CUSTOM_HID_ReceivePacket(&hUsbDeviceFS);
+
+
+
+
+
 	 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	// Avisamos a la tarea que hay un nuevo reporte de salida (OUT)
 	// Despertamos a la Sensor_Task para que procese los datos
@@ -218,7 +228,34 @@ static int8_t USBD_CUSTOM_HID_SendReport_FS(uint8_t *report, uint16_t len)
 /* USER CODE END 7 */
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
+/* USER CODE BEGIN PRIVATE_FUNCTIONS */
 
+/**
+  * @brief  USBD_CUSTOM_HID_ReceivePacket
+  *         Prepara el Endpoint OUT manual para la recepción de datos.
+  * @param  pdev: Instancia del dispositivo USB
+  * @retval Estado (USBD_OK o USBD_FAIL)
+  */
+uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev)
+{
+  USBD_CUSTOM_HID_HandleTypeDef *hhid;
+
+  // En tu versión del stack se usa pClassData directamente
+  if (pdev->pClassData == NULL)
+  {
+    return (uint8_t)USBD_FAIL;
+  }
+
+  hhid = (USBD_CUSTOM_HID_HandleTypeDef *)pdev->pClassData;
+
+  /* Reanudamos el proceso USB Out usando la capa de bajo nivel (Link Layer)
+     0x01 es la dirección del Endpoint OUT típico para Custom HID en F1 */
+  USBD_LL_PrepareReceive(pdev, 0x01, hhid->Report_buf, USBD_CUSTOMHID_OUTREPORT_BUF_SIZE);
+
+  return (uint8_t)USBD_OK;
+}
+
+/* USER CODE END PRIVATE_FUNCTIONS */
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 /**
   * @}

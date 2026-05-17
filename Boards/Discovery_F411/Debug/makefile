@@ -9,11 +9,14 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
+-include USB_DEVICE/Target/subdir.mk
+-include USB_DEVICE/App/subdir.mk
 -include Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/subdir.mk
 -include Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/subdir.mk
 -include Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/subdir.mk
 -include Middlewares/Third_Party/FreeRTOS/Source/subdir.mk
--include Libs/subdir.mk
+-include Middlewares/ST/STM32_USB_Device_Library/Core/Src/subdir.mk
+-include Middlewares/ST/STM32_USB_Device_Library/Class/CustomHID/Src/subdir.mk
 -include Drivers/STM32F4xx_HAL_Driver/Src/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
@@ -39,34 +42,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := EncoderMagnetico
+BUILD_ARTIFACT_NAME := Discovery_F411
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-EncoderMagnetico.elf \
+Discovery_F411.elf \
 
 MAP_FILES += \
-EncoderMagnetico.map \
+Discovery_F411.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-EncoderMagnetico.list \
+Discovery_F411.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: EncoderMagnetico.elf secondary-outputs
+main-build: Discovery_F411.elf secondary-outputs
 
 # Tool invocations
-EncoderMagnetico.elf EncoderMagnetico.map: $(OBJS) $(USER_OBJS) /home/ricardo/Facultad/Sist_RT/EncoderMagnetico/STM32F411VETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "EncoderMagnetico.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/ricardo/Facultad/Sist_RT/EncoderMagnetico/STM32F411VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="EncoderMagnetico.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Discovery_F411.elf Discovery_F411.map: $(OBJS) $(USER_OBJS) /home/ricardo/Facultad/Sist_RT/Servo-motor/STM32-RTOS-Servo-Control/Boards/Discovery_F411/STM32F411VETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "Discovery_F411.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/ricardo/Facultad/Sist_RT/Servo-motor/STM32-RTOS-Servo-Control/Boards/Discovery_F411/STM32F411VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="Discovery_F411.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -75,14 +78,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-EncoderMagnetico.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "EncoderMagnetico.list"
+Discovery_F411.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "Discovery_F411.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) EncoderMagnetico.elf EncoderMagnetico.list EncoderMagnetico.map default.size.stdout
+	-$(RM) Discovery_F411.elf Discovery_F411.list Discovery_F411.map default.size.stdout
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

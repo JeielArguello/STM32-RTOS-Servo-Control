@@ -17,6 +17,8 @@ Este proyecto implementa un sistema de control de posición de lazo cerrado (ser
     *   `/Discovery_F411`: Configuración para el STM32F411VE.
 *   **`/libs`**: Drivers para el encoder magnético AS5600 y el control del driver de motor paso a paso (DRV8825).
 *   **`/Docs`**: Documentación técnica, esquemáticos y diagramas de arquitectura.
+*   **`/App`**:  Aplicacion de consola para comunicarse mediante UDB HID con el micro.
+
 
 ## Hardware Utilizado
 
@@ -41,4 +43,12 @@ Este proyecto implementa un sistema de control de posición de lazo cerrado (ser
     ```bash
     git clone https://github.com/JeielArguello/STM32-RTOS-Servo-Control.git
 
+   ```
+
+## Requisitos
+
+### Linux 
+    ```bash
+    sudo apt install libudev1 libudev-dev pkg-config
+    sudo apt install libhidapi-dev
    ```

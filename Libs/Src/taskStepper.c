@@ -89,7 +89,7 @@ void AppInit(void * pvParameters){
 		HAL_Delay(1000);
 	}
 
-	CUSTOM_HID_Init_FS();
+	//CUSTOM_HID_Init_FS();
 
 	xTaskCreate(StartDriverTask, "DriverTask", 100, NULL, 4, NULL);
 	xTaskCreate(StartSensorTask, "SensorTask", 100, NULL, 4, NULL);
@@ -180,12 +180,12 @@ void StartSensorTask(void *argument) {
 
 void StartControlTask(void *argument) {
 
-	EncoderData_t* pvSensor = NULL;
+	EncoderData_t pvSensor;
 	BaseType_t xStatus;
 
     for(;;){
 
-    	xStatus = xQueueReceive( Queue2_SensorHandle, pvSensor,portMAX_DELAY);
+    	xStatus = xQueueReceive( Queue2_SensorHandle, &pvSensor,portMAX_DELAY);
 		if( xStatus == pdPASS )
 		{
 
@@ -281,7 +281,7 @@ void StartMonitorTask(void *argument) {
         }
 
         // 3. Heartbeat: Toggleamos el LED para indicar que el sistema está vivo
-        HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
+       // HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
 
         // 4. Bloqueo preciso y determinístico de la tarea de monitoreo
         vTaskDelayUntil(&xLastWakeTime, xPeriod);
