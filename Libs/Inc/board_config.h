@@ -35,7 +35,7 @@
 	#define DRIVER_TIMER_HANDLE  htim2
 	#define DRIVER_TIMER_INSTANCE TIM2
 	#define DRIVER_TIMER_CHANNEL TIM_CHANNEL_2
-	#define SAMPLE_TIMER_HANDLE htim1
+	#define SAMPLE_TIMER_HANDLE htim4
 #elif
 #ifdef STM32F411xE  // Si es la Discovery
   	#define GPIO_LED_Pin GPIO_PIN_13

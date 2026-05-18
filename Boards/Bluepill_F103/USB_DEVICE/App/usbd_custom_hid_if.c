@@ -32,7 +32,7 @@
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
-uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev);
+static uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev);
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -91,30 +91,32 @@ uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev);
 /** Usb HID report descriptor. */
 __ALIGN_BEGIN static uint8_t CUSTOM_HID_ReportDesc_FS[USBD_CUSTOM_HID_REPORT_DESC_SIZE] __ALIGN_END =
 {
+  /* USER CODE BEGIN 0 */
   0x06, 0x00, 0xFF,    // USAGE_PAGE (Vendor Defined)
   0x09, 0x01,          // USAGE (Vendor Usage 1)
   0xA1, 0x01,          // COLLECTION (Application)
 
-  // --- Reporte de Entrada (Device -> PC) ---
+  // --- Reporte de Entrada (Device -> PC) --- [17 bytes]
   0x85, 0x01,          // REPORT_ID (1)
   0x09, 0x02,          // USAGE (Vendor Usage 2)
-  0x15, 0x00,          // LOGICAL_MINIMUM (0)
-  0x26, 0xFF, 0x00,    // LOGICAL_MAXIMUM (255)
+  0x15, 0x80,          // LOGICAL_MINIMUM (-128) -> Rango con signo de 8 bits
+  0x25, 0x7F,          // LOGICAL_MAXIMUM (127)
   0x75, 0x08,          // REPORT_SIZE (8 bits)
-  0x95, 0x09,          // REPORT_COUNT (9 bytes: 4 pos + 4 vel + 1 flags)
+  0x95, 0x09,          // REPORT_COUNT (9 bytes totales de datos)
   0x81, 0x02,          // INPUT (Data,Var,Abs)
 
-  // --- Reporte de Salida (PC -> Device) ---
+  // --- Reporte de Salida (PC -> Device) --- [17 bytes]
   0x85, 0x02,          // REPORT_ID (2)
   0x09, 0x03,          // USAGE (Vendor Usage 3)
-  0x15, 0x00,          // LOGICAL_MINIMUM (0)        <-- Agregado por seguridad
-  0x26, 0xFF, 0x00,    // LOGICAL_MAXIMUM (255)      <-- Agregado por seguridad
-  0x75, 0x08,          // REPORT_SIZE (8 bits)       <-- ¡CRÍTICO: Faltaba este!
-  0x95, 0x09,          // REPORT_COUNT (9 bytes)
+  0x15, 0x80,          // LOGICAL_MINIMUM (-128)
+  0x25, 0x7F,          // LOGICAL_MAXIMUM (127)
+  0x75, 0x08,          // REPORT_SIZE (8 bits)
+  0x95, 0x09,          // REPORT_COUNT (9 bytes totales de datos)
   0x91, 0x02,          // OUTPUT (Data,Var,Abs)
-
-  0xC0                 // END_COLLECTION
+  /* USER CODE END 0 */
+  0xC0    /*     END_COLLECTION	             */
 };
+
 /* USER CODE BEGIN PRIVATE_VARIABLES */
 
 /* USER CODE END PRIVATE_VARIABLES */
@@ -209,7 +211,7 @@ static int8_t CUSTOM_HID_OutEvent_FS(uint8_t event_idx, uint8_t state)
 	xSemaphoreGiveFromISR(Sem2_DMA_RxHandle, &xHigherPriorityTaskWoken);
 	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 	return (USBD_OK);
-	/* USER CODE END 6 */
+  /* USER CODE END 6 */
 }
 
 /* USER CODE BEGIN 7 */
@@ -236,7 +238,7 @@ static int8_t USBD_CUSTOM_HID_SendReport_FS(uint8_t *report, uint16_t len)
   * @param  pdev: Instancia del dispositivo USB
   * @retval Estado (USBD_OK o USBD_FAIL)
   */
-uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev)
+static uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev)
 {
   USBD_CUSTOM_HID_HandleTypeDef *hhid;
 

@@ -49,8 +49,12 @@ static void UpdateHIDData(int32_t pos, uint32_t vel){
 }
 
 
+/* --------------------------- Tareas ------------------------------------------------*/
+
+
 void AppInit(void * pvParameters){
 
+	MX_USB_DEVICE_Init();
 	HAL_TIM_Base_Start_IT(&SAMPLE_TIMER_HANDLE);
 
 	Sem1_HID_RxHandle = xSemaphoreCreateBinary();
@@ -89,13 +93,13 @@ void AppInit(void * pvParameters){
 		HAL_Delay(1000);
 	}
 
-	//CUSTOM_HID_Init_FS();
+	 HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
 
 	xTaskCreate(StartDriverTask, "DriverTask", 100, NULL, 4, NULL);
 	xTaskCreate(StartSensorTask, "SensorTask", 100, NULL, 4, NULL);
 	xTaskCreate(StartControlTask, "ControlTask", 100, NULL, 3, NULL);
-	xTaskCreate(StartInputHIDTask, "InputHIDTask", 100, NULL, 1, NULL);
-	xTaskCreate(StartOutputHIDTask, "OutputHIDTask", 100, NULL, 1, NULL);
+	xTaskCreate(StartInputHIDTask, "InputHIDTask", 100, NULL, 2, NULL);
+	xTaskCreate(StartOutputHIDTask, "OutputHIDTask", 100, NULL, 2, NULL);
 	xTaskCreate(StartMonitorTask, "MonitorTask", 100, NULL, 1, NULL);
 
 
@@ -185,7 +189,7 @@ void StartControlTask(void *argument) {
 
     for(;;){
 
-    	xStatus = xQueueReceive( Queue2_SensorHandle, &pvSensor,portMAX_DELAY);
+    	xStatus = xQueuePeek( Queue2_SensorHandle, &pvSensor,portMAX_DELAY);
 		if( xStatus == pdPASS )
 		{
 
@@ -241,7 +245,7 @@ void StartOutputHIDTask(void *argument) {
     for(;;) {
         // Bloqueo hasta que la SensorTask mande datos frescos
         // Pasamos la dirección de la variable local (&sensor_local)
-        xStatus = xQueueReceive(Queue2_SensorHandle, &sensor_local, portMAX_DELAY);
+        xStatus = xQueuePeek(Queue2_SensorHandle, &sensor_local, portMAX_DELAY);
 
         if(xStatus == pdPASS) {
         	if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
@@ -250,6 +254,7 @@ void StartOutputHIDTask(void *argument) {
 				// Casteamos a los tipos que definimos en la struct empaquetada
         		 UpdateHIDData((int32_t)sensor_data.total_degrees,
         		                             (uint32_t)sensor_data.velocity_dps);
+
 
 				// 4. Envío por USB
 				// El tamaño es sizeof(HID_Report_t), que debería ser 10
@@ -281,7 +286,7 @@ void StartMonitorTask(void *argument) {
         }
 
         // 3. Heartbeat: Toggleamos el LED para indicar que el sistema está vivo
-       // HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
+        HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
 
         // 4. Bloqueo preciso y determinístico de la tarea de monitoreo
         vTaskDelayUntil(&xLastWakeTime, xPeriod);

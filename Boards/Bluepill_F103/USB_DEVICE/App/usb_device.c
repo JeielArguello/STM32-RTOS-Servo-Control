@@ -64,7 +64,20 @@ USBD_HandleTypeDef hUsbDeviceFS;
 void MX_USB_DEVICE_Init(void)
 {
   /* USER CODE BEGIN USB_DEVICE_Init_PreTreatment */
+	// --- FORCE USB RE-ENUMERATION BY SOFTWARE ---
+	  // Forzamos la línea PA12 (USB_DP) a BAJO durante unos milisegundos.
+	  // Esto le miente a la PC haciéndole creer que desconectamos el cable físico.
+	  GPIO_InitTypeDef GPIO_InitStruct = {0};
+	  __HAL_RCC_GPIOA_CLK_ENABLE();
 
+	  GPIO_InitStruct.Pin = GPIO_PIN_12;
+	  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Push-Pull para forzar el cero
+	  GPIO_InitStruct.Pull = GPIO_NOPULL;
+	  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET); // Tiramos D+ a masa
+	  HAL_Delay(100); // Esperamos a que la PC note la "desconexión"
   /* USER CODE END USB_DEVICE_Init_PreTreatment */
 
   /* Init Device Library, add supported class and start the library. */

@@ -41,7 +41,7 @@
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.openocd.DBG_STOP_WATCHDOG_THEN_HALTED_ALLOWED" value="true"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.openocd.OPENOCD_GENERATOR_OPTION" value="true"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.openocd.OPENOCD_NAME" value="&quot;${stm32cubeide_openocd_path}/openocd&quot;"/>
-    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.openocd.OPENOCD_OTHER_OPTIONS" value="-c &quot;set _CPUTAPID 0x1ba01477&quot;"/>
+    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.openocd.OPENOCD_OTHER_OPTIONS" value="-c &quot;set _CPUTAPID 0x1ba01477&quot; "/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.openocd.OPENOCD_SCRIPT" value="${ProjDirPath}/Bluepill_F103 Debug (1).cfg"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.openocd.OPENOCD_SCRIPT_CHOICE" value="automated"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.openocdenable_rtos" value="false"/>
