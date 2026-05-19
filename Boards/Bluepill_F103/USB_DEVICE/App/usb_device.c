@@ -78,6 +78,7 @@ void MX_USB_DEVICE_Init(void)
 
 	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET); // Tiramos D+ a masa
 	  HAL_Delay(100); // Esperamos a que la PC note la "desconexión"
+
   /* USER CODE END USB_DEVICE_Init_PreTreatment */
 
   /* Init Device Library, add supported class and start the library. */

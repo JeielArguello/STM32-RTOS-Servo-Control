@@ -92,29 +92,8 @@ static uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev);
 __ALIGN_BEGIN static uint8_t CUSTOM_HID_ReportDesc_FS[USBD_CUSTOM_HID_REPORT_DESC_SIZE] __ALIGN_END =
 {
   /* USER CODE BEGIN 0 */
-  0x06, 0x00, 0xFF,    // USAGE_PAGE (Vendor Defined)
-  0x09, 0x01,          // USAGE (Vendor Usage 1)
-  0xA1, 0x01,          // COLLECTION (Application)
+		  0x06, 0x00, 0xFF, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x01, 0x09, 0x02, 0x15, 0x80, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x09, 0x81, 0x02, 0x85, 0x02, 0x09, 0x03, 0x15, 0x80, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x09, 0x91, 0x02, 0xC0
 
-  // --- Reporte de Entrada (Device -> PC) --- [17 bytes]
-  0x85, 0x01,          // REPORT_ID (1)
-  0x09, 0x02,          // USAGE (Vendor Usage 2)
-  0x15, 0x80,          // LOGICAL_MINIMUM (-128) -> Rango con signo de 8 bits
-  0x25, 0x7F,          // LOGICAL_MAXIMUM (127)
-  0x75, 0x08,          // REPORT_SIZE (8 bits)
-  0x95, 0x09,          // REPORT_COUNT (9 bytes totales de datos)
-  0x81, 0x02,          // INPUT (Data,Var,Abs)
-
-  // --- Reporte de Salida (PC -> Device) --- [17 bytes]
-  0x85, 0x02,          // REPORT_ID (2)
-  0x09, 0x03,          // USAGE (Vendor Usage 3)
-  0x15, 0x80,          // LOGICAL_MINIMUM (-128)
-  0x25, 0x7F,          // LOGICAL_MAXIMUM (127)
-  0x75, 0x08,          // REPORT_SIZE (8 bits)
-  0x95, 0x09,          // REPORT_COUNT (9 bytes totales de datos)
-  0x91, 0x02,          // OUTPUT (Data,Var,Abs)
-  /* USER CODE END 0 */
-  0xC0    /*     END_COLLECTION	             */
 };
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
@@ -132,7 +111,7 @@ __ALIGN_BEGIN static uint8_t CUSTOM_HID_ReportDesc_FS[USBD_CUSTOM_HID_REPORT_DES
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
-extern SemaphoreHandle_t Sem2_DMA_RxHandle;
+extern SemaphoreHandle_t Sem1_HID_RxHandle;
 /* USER CODE END EXPORTED_VARIABLES */
 /**
   * @}
@@ -199,7 +178,6 @@ static int8_t CUSTOM_HID_DeInit_FS(void)
 static int8_t CUSTOM_HID_OutEvent_FS(uint8_t event_idx, uint8_t state)
 {
   /* USER CODE BEGIN 6 */
-	  USBD_CUSTOM_HID_ReceivePacket(&hUsbDeviceFS);
 
 
 
@@ -208,8 +186,9 @@ static int8_t CUSTOM_HID_OutEvent_FS(uint8_t event_idx, uint8_t state)
 	 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	// Avisamos a la tarea que hay un nuevo reporte de salida (OUT)
 	// Despertamos a la Sensor_Task para que procese los datos
-	xSemaphoreGiveFromISR(Sem2_DMA_RxHandle, &xHigherPriorityTaskWoken);
+	xSemaphoreGiveFromISR(Sem1_HID_RxHandle, &xHigherPriorityTaskWoken);
 	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	USBD_CUSTOM_HID_ReceivePacket(&hUsbDeviceFS);
 	return (USBD_OK);
   /* USER CODE END 6 */
 }

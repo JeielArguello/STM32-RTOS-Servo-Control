@@ -6,11 +6,54 @@
 #include <string.h>
 #include <wchar.h>
 #include <stdint.h>
+#include <pthread.h>
+#include <unistd.h>
 #include <hidapi/hidapi.h>
 
 // Default Vendor ID and Product ID (change to match your device)
-#define DEFAULT_VID 1155
-#define DEFAULT_PID 22352
+#define DEFAULT_VID 0x0483
+#define DEFAULT_PID 0x5750
+
+typedef struct __attribute__((packed)) {
+    uint8_t reportID;
+    int32_t position;
+    uint32_t velocity;
+    uint8_t status_flags;
+} HID_Report_t;
+
+static volatile int g_running = 1;
+
+static void *reader_thread(void *arg)
+{
+    hid_device *handle = (hid_device *)arg;
+    unsigned char report[10];
+    printf("Reader thread started, waiting for data...\n");
+
+    while (g_running) {
+        int bytes_read = hid_read_timeout(handle, report, sizeof(report), 100);
+        if (bytes_read > 0) {
+            printf("\nRX HID (%d bytes):", bytes_read);
+            for (int i = 0; i < bytes_read; ++i) {
+                printf(" %02X", report[i]);
+            }
+            printf("\n");
+
+            if (bytes_read >= (int)sizeof(HID_Report_t)) {
+                HID_Report_t telemetry;
+                memcpy(&telemetry, report, sizeof(telemetry));
+                printf("Telemetry -> reportID: 0x%02X, position: %ld, velocity: %lu, status: 0x%02X\n",
+                       telemetry.reportID,
+                       (long)telemetry.position,
+                       (unsigned long)telemetry.velocity,
+                       telemetry.status_flags);
+            }
+
+            fflush(stdout);
+        }
+    }
+
+    return NULL;
+}
 
 int main(int argc, char **argv)
 {
@@ -36,10 +79,18 @@ int main(int argc, char **argv)
     }
 
     printf("USB HID console connected to %04hx:%04hx\n", vid, pid);
-    printf("Enter direction: L (left), R (right), S (stop), Q (quit)\n");
 
+    pthread_t rx_thread;
+    if (pthread_create(&rx_thread, NULL, reader_thread, handle) != 0) {
+        fprintf(stderr, "Failed to start HID reader thread\n");
+        hid_close(handle);
+        hid_exit();
+        return 3;
+    }
+    
     for (;;) {
         char line[128];
+        printf("Enter direction: L (left), R (right), S (stop), Q (quit)\n");
         if (!fgets(line, sizeof(line), stdin)) break;
         // trim
         char cmd = 0;
@@ -53,13 +104,16 @@ int main(int argc, char **argv)
         if (cmd == 'Q') break;
 
         // Prepare a simple HID output report. First byte is report ID (0 if unused)
-        unsigned char report[65];
+        unsigned char report[10];
         memset(report, 0, sizeof(report));
-        report[0] = 0x00; // report id
+        report[0] = 0x02; // report id
         report[1] = (unsigned char)cmd; // command: 'L','R','S'
-
+        
+        printf("Sending command %c to device...\n", cmd);
+        printf("Report data size: %zu bytes\n", sizeof(report));
         // Write report (report length is 65 for one-byte report id + 64 data)
         res = hid_write(handle, report, sizeof(report));
+        printf("hid_write returned: %d\n", res);
         if (res < 0) {
             fprintf(stderr, "hid_write failed\n");
             break;
@@ -67,6 +121,9 @@ int main(int argc, char **argv)
 
         printf("Sent command %c (bytes written: %d)\n", cmd, res);
     }
+
+    g_running = 0;
+    pthread_join(rx_thread, NULL);
 
     hid_close(handle);
     hid_exit();

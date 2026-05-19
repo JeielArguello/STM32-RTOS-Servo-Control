@@ -175,7 +175,7 @@ void SystemClock_Config(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-  if (htim->Instance == TIM1)
+  if (htim->Instance == SAMPLE_TIMER_INSTANCE)
   {
 
 	  if (HAL_I2C_Mem_Read_DMA(&hi2c1,AS5600_ADDR, ANGLE_REG_MSB, I2C_MEMADD_SIZE_8BIT, sensor_data.buffer, 2) != HAL_OK) {

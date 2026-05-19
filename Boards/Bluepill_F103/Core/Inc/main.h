@@ -39,6 +39,7 @@ extern "C" {
 #include "Encoder_types.h"
 #include "stepper.h"
 #include "taskStepper.h"
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/

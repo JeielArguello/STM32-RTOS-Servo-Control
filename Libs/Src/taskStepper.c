@@ -54,53 +54,61 @@ static void UpdateHIDData(int32_t pos, uint32_t vel){
 
 void AppInit(void * pvParameters){
 
-	MX_USB_DEVICE_Init();
 	HAL_TIM_Base_Start_IT(&SAMPLE_TIMER_HANDLE);
 
 	Sem1_HID_RxHandle = xSemaphoreCreateBinary();
 	if(Sem1_HID_RxHandle  == NULL) {
 		// Error al crear el semáforo
-		HAL_Delay(1000);
+		Error_Handler();
 	}
 
 	Sem2_DMA_RxHandle = xSemaphoreCreateBinary();
 	if(Sem2_DMA_RxHandle  == NULL) {
 		// Error al crear el semáforo
-		HAL_Delay(1000);
-	}
-
-
-	Queue1_ComHandle = xQueueCreate(2,sizeof(int32_t));    // PC -> Control
-	Queue2_SensorHandle = xQueueCreate(1,sizeof(EncoderData_t*)); // Sensor -> Control/Monitor/Output
-	Queue3_PosHandle = xQueueCreate(2,sizeof(int32_t));     // Control -> Driver
-
-	if(Queue1_ComHandle  == NULL) {
-			// Error al crear el semáforo
-		HAL_Delay(1000);
-	}
-
-	if(Queue2_SensorHandle  == NULL) {
-				// Error al crear el semáforo
-		HAL_Delay(1000);
-	}
-
-	if(Queue3_PosHandle  == NULL) {
-		HAL_Delay(1000);
+		Error_Handler();
 	}
 
 	Sem3_Mutex_Sensor = xSemaphoreCreateMutex();
 	if(Sem3_Mutex_Sensor == NULL) {
-		HAL_Delay(1000);
+		Error_Handler();
 	}
 
-	 HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
+	Sem4_Mutex_Report = xSemaphoreCreateMutex();
+	if(Sem4_Mutex_Report  == NULL) {
+		// Error al crear el semáforo
+		Error_Handler();
+	}
+
+	MX_USB_DEVICE_Init();
+
+
+	Queue1_ComHandle = xQueueCreate(2,sizeof(int32_t));    // PC -> Control
+	Queue2_SensorHandle = xQueueCreate(5,sizeof(EncoderData_t*)); // Sensor -> Control/Monitor/Output
+	Queue3_PosHandle = xQueueCreate(2,sizeof(int32_t));     // Control -> Driver
+
+	if(Queue1_ComHandle  == NULL) {
+			// Error al crear el semáforo
+		Error_Handler();
+	}
+
+	if(Queue2_SensorHandle  == NULL) {
+				// Error al crear el semáforo
+		Error_Handler();
+	}
+
+	if(Queue3_PosHandle  == NULL) {
+		Error_Handler();
+	}
+
+
+	HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
 
 	xTaskCreate(StartDriverTask, "DriverTask", 100, NULL, 4, NULL);
 	xTaskCreate(StartSensorTask, "SensorTask", 100, NULL, 4, NULL);
 	xTaskCreate(StartControlTask, "ControlTask", 100, NULL, 3, NULL);
-	xTaskCreate(StartInputHIDTask, "InputHIDTask", 100, NULL, 2, NULL);
-	xTaskCreate(StartOutputHIDTask, "OutputHIDTask", 100, NULL, 2, NULL);
-	xTaskCreate(StartMonitorTask, "MonitorTask", 100, NULL, 1, NULL);
+	xTaskCreate(StartInputHIDTask, "InputHIDTask", 100, NULL, 4, NULL);
+	xTaskCreate(StartOutputHIDTask, "OutputHIDTask", 100, NULL, 4, NULL);
+	xTaskCreate(StartMonitorTask, "MonitorTask", 100, NULL, 3, NULL);
 
 
 	for(;;){
@@ -141,6 +149,7 @@ void StartSensorTask(void *argument) {
     uint16_t last_raw = 0;
     float last_degrees = 0.0f;
     const float dt = 0.001f; // 1ms (frecuencia del TIM1)
+    EncoderData_t *p_sensor = &sensor_data;
 
     for(;;) {
         // 1. Esperar al DMA (Sincronizado con TIM1)
@@ -149,33 +158,37 @@ void StartSensorTask(void *argument) {
             // 2. Procesar datos crudos fuera del mutex para minimizar latencia
             uint16_t current_raw = ((uint16_t)sensor_data.buffer[0] << 8) | sensor_data.buffer[1];
             int16_t diff = current_raw - last_raw;
+            if (diff !=0){
+				// 3. Tomar Mutex para actualizar la estructura global
+				if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
 
-            // 3. Tomar Mutex para actualizar la estructura global
-            if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
+					sensor_data.raw_angle = current_raw;
 
-                sensor_data.raw_angle = current_raw;
+					// Lógica de conteo de vueltas
+					if (diff > 2048)  sensor_data.rotations--;
+					else if (diff < -2048) sensor_data.rotations++;
 
-                // Lógica de conteo de vueltas
-                if (diff > 2048)  sensor_data.rotations--;
-                else if (diff < -2048) sensor_data.rotations++;
+					last_raw = current_raw;
 
-                last_raw = current_raw;
+					// Calcular posición total
+					sensor_data.total_degrees = (sensor_data.rotations * 360.0f) +
+												(sensor_data.raw_angle * 360.0f / 4096.0f);
 
-                // Calcular posición total
-                sensor_data.total_degrees = (sensor_data.rotations * 360.0f) +
-                                            (sensor_data.raw_angle * 360.0f / 4096.0f);
+					// 4. Cálculo de Velocidad (Grados por segundo)
+					// v = (pos_actual - pos_anterior) / dt
+					sensor_data.velocity_dps = (sensor_data.total_degrees - last_degrees) / dt;
+					last_degrees = sensor_data.total_degrees;
 
-                // 4. Cálculo de Velocidad (Grados por segundo)
-                // v = (pos_actual - pos_anterior) / dt
-                sensor_data.velocity_dps = (sensor_data.total_degrees - last_degrees) / dt;
-                last_degrees = sensor_data.total_degrees;
-
-                // 5. Liberar Mutex rápido
-                xSemaphoreGive(Sem3_Mutex_Sensor);
+					// 5. Liberar Mutex rápido
+					xSemaphoreGive(Sem3_Mutex_Sensor);
 
 
-                // 6. Encolar copia de los datos para la ControlTask (PID)
-                xQueueSendToBack(Queue2_SensorHandle, (void*)&sensor_data, 0);
+					// 6. Encolar copia de los datos para la ControlTask (PID)
+					if(xQueueSendToBack(Queue2_SensorHandle, &p_sensor, 0) != pdPASS){
+						uint8_t pepe = sensor_data.buffer[0];
+						pepe++;
+					}
+				}
             }
         }
     }
@@ -184,7 +197,8 @@ void StartSensorTask(void *argument) {
 
 void StartControlTask(void *argument) {
 
-	EncoderData_t pvSensor;
+	EncoderData_t* pvSensor;
+	int32_t target_pos = 10;
 	BaseType_t xStatus;
 
     for(;;){
@@ -193,7 +207,7 @@ void StartControlTask(void *argument) {
 		if( xStatus == pdPASS )
 		{
 
-			xQueueSendToBack(Queue3_PosHandle, &sensor_data, 0);
+			xQueueSendToBack(Queue3_PosHandle, &target_pos, 0);
 
     	}
 
@@ -227,38 +241,35 @@ void StartInputHIDTask(void *argument) {
 				xQueueSend(Queue1_ComHandle, &new_setpoint, 0);
 			}
 
-            xSemaphoreGive(Sem1_HID_RxHandle);
         }
     }
 }
 
 void StartOutputHIDTask(void *argument) {
     // 1. Variable local para recibir la COPIA de los datos del sensor
-    EncoderData_t sensor_local;
+    EncoderData_t* sensor_local;
 
     // 2. Estructura del reporte (la que definimos de 10 bytes)
-    HID_Report_t reporte_salida;
-    reporte_salida.reportID = 0x01; // ID de reporte de entrada al PC
+    report_send.reportID = 0x01; // ID de reporte de entrada al PC
 
     BaseType_t xStatus;
 
     for(;;) {
         // Bloqueo hasta que la SensorTask mande datos frescos
         // Pasamos la dirección de la variable local (&sensor_local)
-        xStatus = xQueuePeek(Queue2_SensorHandle, &sensor_local, portMAX_DELAY);
+        xStatus = xQueueReceive(Queue2_SensorHandle, &sensor_local, portMAX_DELAY);
 
         if(xStatus == pdPASS) {
         	if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
 
 				// 3. Mapeo de datos del sensor al reporte HID
 				// Casteamos a los tipos que definimos en la struct empaquetada
-        		 UpdateHIDData((int32_t)sensor_data.total_degrees,
-        		                             (uint32_t)sensor_data.velocity_dps);
+        		 UpdateHIDData(sensor_data.total_degrees, sensor_data.velocity_dps);
 
 
 				// 4. Envío por USB
 				// El tamaño es sizeof(HID_Report_t), que debería ser 10
-				USBD_CUSTOM_HID_SendReport(&hUsbDeviceFS, (uint8_t*)&reporte_salida, sizeof(HID_Report_t));
+				USBD_CUSTOM_HID_SendReport(&hUsbDeviceFS, (uint8_t*)&report_send, sizeof(HID_Report_t));
 
                 xSemaphoreGive(Sem3_Mutex_Sensor);
         	}
