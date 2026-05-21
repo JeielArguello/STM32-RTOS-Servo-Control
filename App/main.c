@@ -26,7 +26,7 @@ static volatile int g_running = 1;
 static void *reader_thread(void *arg)
 {
     hid_device *handle = (hid_device *)arg;
-    unsigned char report[10];
+    unsigned char report[64];
     printf("Reader thread started, waiting for data...\n");
 
     while (g_running) {
@@ -104,15 +104,26 @@ int main(int argc, char **argv)
         if (cmd == 'Q') break;
 
         // Prepare a simple HID output report. First byte is report ID (0 if unused)
-        unsigned char report[10];
-        memset(report, 0, sizeof(report));
-        report[0] = 0x02; // report id
-        report[1] = (unsigned char)cmd; // command: 'L','R','S'
-        
+        HID_Report_t report;
+
+        report.reportID = 0x02; // report id
+        report.position = 0;
+        report.velocity = 0;
+        report.status_flags = 0;
+        if (cmd == 'L') {
+            report.position = -100; // example value for left
+            report.velocity = 50;    // example velocity
+        } else if (cmd == 'R') {
+            report.position = 100;  // example value for right
+            report.velocity = 50;   // example velocity
+        } else if (cmd == 'S') {
+            report.position = 0;    // stop
+            report.velocity = 0;
+        }
         printf("Sending command %c to device...\n", cmd);
         printf("Report data size: %zu bytes\n", sizeof(report));
         // Write report (report length is 65 for one-byte report id + 64 data)
-        res = hid_write(handle, report, sizeof(report));
+        res = hid_write(handle, (unsigned char*) &report, sizeof(report));
         printf("hid_write returned: %d\n", res);
         if (res < 0) {
             fprintf(stderr, "hid_write failed\n");

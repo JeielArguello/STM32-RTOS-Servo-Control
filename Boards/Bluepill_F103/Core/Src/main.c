@@ -99,7 +99,7 @@ int main(void)
 
 
   BaseType_t status;
-  status = xTaskCreate(AppInit, "TaskCreate", 100, NULL, 10, NULL) ;
+  status = xTaskCreate(AppInit, "TaskCreate", 256, NULL, 10, NULL) ;
   if( status == pdFAIL){
 	  Error_Handler();
   }

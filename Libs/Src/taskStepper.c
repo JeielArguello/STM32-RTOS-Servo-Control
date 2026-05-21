@@ -8,6 +8,7 @@
 #include "taskStepper.h"
 #include "usb_device.h"
 #include "usbd_custom_hid_if.h"
+#include "timers.h"
 
 
 typedef struct __attribute__((packed)) {
@@ -54,6 +55,8 @@ static void UpdateHIDData(int32_t pos, uint32_t vel){
 /* --------------------------- Tareas ------------------------------------------------*/
 
 
+
+
 void AppInit(void * pvParameters){
 
 
@@ -83,7 +86,7 @@ void AppInit(void * pvParameters){
 
 
 	Queue1_ComHandle = xQueueCreate(2,sizeof(int32_t));    // PC -> Control
-	Queue2_SensorHandle = xQueueCreate(5,sizeof(EncoderData_t*)); // Sensor -> Control/Monitor/Output
+	Queue2_SensorHandle = xQueueCreate(5,sizeof(EncoderData_t)); // Sensor -> Control/Monitor/Output
 	Queue3_PosHandle = xQueueCreate(2,sizeof(int32_t));     // Control -> Driver
 
 	if(Queue1_ComHandle  == NULL) {
@@ -101,6 +104,23 @@ void AppInit(void * pvParameters){
 		Error_Handler();
 	}
 
+	// Escáner rápido de I2C para el AS5600
+	HAL_StatusTypeDef resultado;
+	uint16_t i2c_address = (0x36 << 1); // 0x6C
+
+	// Enviamos un ping de prueba para ver si el chip responde en el bus
+	resultado = HAL_I2C_IsDeviceReady(&hi2c1, i2c_address, 3, 100);
+
+	if (resultado == HAL_OK) {
+		int pepe1 = 0;
+		pepe1++;
+	} else if(resultado == HAL_BUSY){
+	    // El chip no responde (puede estar quemado el puerto I2C o los pines SDA/SCL del STM32)
+		Error_Handler();
+	}else if(resultado == HAL_TIMEOUT){
+		Error_Handler();
+	}
+
 	xTimerSensorHandle = xTimerCreate(
 	        "TimerSensor",               // Nombre para debug
 	        pdMS_TO_TICKS(1000),           // Período (ej: 1 s)
@@ -109,45 +129,49 @@ void AppInit(void * pvParameters){
 	        CallbackTimerSensor          // Función que se va a ejecutar
 	    );
 
-	    // 4. Arrancar el timer
-	    if (xTimerSensorHandle != NULL) {
-	        xTimerStart(xTimerSensorHandle, 0);
-	    }
+	if (xTimerSensorHandle != NULL) {
+		BaseType_t timer_status;
+		    timer_status = xTimerStart(xTimerSensorHandle, portMAX_DELAY); // Esperamos si la cola está llena
+
+		    if (timer_status != pdPASS) {
+		        // Poné un breakpoint ACÁ. Si frena acá, la cola de comandos del timer se rompió.
+		        Error_Handler();
+		    }
+	}else{
+		Error_Handler();
+	}
 
 	MX_USB_DEVICE_Init();
 
-	HAL_GPIO_TogglePin(GPIO_LED_GPIO_Port, GPIO_LED_Pin);
-
 	BaseType_t status;
-	status = xTaskCreate(StartDriverTask, "DriverTask", 100, NULL, 4, NULL);
+	status = xTaskCreate(StartDriverTask, "DriverTask", 128, NULL, 4, NULL);
 	if( status == pdFAIL){
 	Error_Handler();
 	}
 
-	status = xTaskCreate(StartSensorTask, "SensorTask", 100, NULL, 4, NULL);
-
+	status = xTaskCreate(StartSensorTask, "SensorTask", 128, NULL, 4, NULL);
 	if( status == pdFAIL){
 	Error_Handler();
 	}
 
-	status = xTaskCreate(StartControlTask, "ControlTask", 100, NULL, 3, NULL);
+	status = xTaskCreate(StartControlTask, "ControlTask", 128, NULL, 3, NULL);
 	if( status == pdFAIL){
 	  Error_Handler();
 	}
 
 
-	status = xTaskCreate(StartInputHIDTask, "InputHIDTask", 100, NULL, 4, NULL);
+	status = xTaskCreate(StartInputHIDTask, "InputHIDTask", 128, NULL, 4, NULL);
 	if( status == pdFAIL){
 	  Error_Handler();
 	}
 
 
-	status = xTaskCreate(StartOutputHIDTask, "OutputHIDTask", 100, NULL, 4, NULL);
+	status = xTaskCreate(StartOutputHIDTask, "OutputHIDTask", 128, NULL, 4, NULL);
 	if( status == pdFAIL){
 	  Error_Handler();
 	}
 
-	status = xTaskCreate(StartMonitorTask, "MonitorTask", 100, NULL, 3, NULL);
+	status = xTaskCreate(StartMonitorTask, "MonitorTask", 128, NULL, 3, NULL);
 	if( status == pdFAIL){
 	  Error_Handler();
 	}
@@ -179,7 +203,7 @@ void StartDriverTask(void *argument) {
 			if(xStatus == pdPASS) {
 				// Ahora 'target_pos' tiene el valor real enviado por la otra tarea
 				// Aquí podrías calcular la diferencia para mover el motor
-				Stepper_Move(&motor, 200, 500);
+				Stepper_Move(&motor, target_pos, 500);
 			}
 		}
 }
@@ -187,16 +211,17 @@ void StartDriverTask(void *argument) {
 void StartSensorTask(void *argument) {
     uint16_t last_raw = 0;
     uint32_t last_degrees = 0;
-    const uint16_t dt = 1000; // 1ms (frecuencia del TIM1)
-    EncoderData_t *p_sensor = &sensor_data;
+    const uint16_t dt = 1000; // 1s (frecuencia del TIM)
+    uint16_t current_raw = 0;
+    int16_t diff = 0;
 
     for(;;) {
-        // 1. Esperar al DMA (Sincronizado con TIM1)
+        // 1. Esperar al DMA (Sincronizado con TIM)
         if(xSemaphoreTake(Sem2_DMA_RxHandle, portMAX_DELAY) == pdPASS) {
 
             // 2. Procesar datos crudos fuera del mutex para minimizar latencia
-            uint16_t current_raw = ((uint16_t)sensor_data.buffer[0] << 8) | sensor_data.buffer[1];
-            int16_t diff = current_raw - last_raw;
+        	current_raw = ((uint16_t)sensor_data.buffer[0] << 8) | sensor_data.buffer[1];
+            diff = current_raw - last_raw;
             if (diff !=0){
 				// 3. Tomar Mutex para actualizar la estructura global
 				if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
@@ -223,7 +248,7 @@ void StartSensorTask(void *argument) {
 
 
 					// 6. Encolar copia de los datos para la ControlTask (PID)
-					if(xQueueSendToBack(Queue2_SensorHandle, &p_sensor, 0) == pdFAIL){
+					if(xQueueSendToBack(Queue2_SensorHandle, &sensor_data, 0) == pdFAIL){
 						uint8_t pepe = sensor_data.buffer[0];
 						pepe++;
 					}
@@ -236,19 +261,25 @@ void StartSensorTask(void *argument) {
 
 void StartControlTask(void *argument) {
 
-	EncoderData_t* pvSensor;
-	int32_t target_pos = 10;
+	EncoderData_t Sensor_local;
+	int32_t target_pos = 200;
 	BaseType_t xStatus;
 
     for(;;){
 
-    	xStatus = xQueueReceive(Queue2_SensorHandle, &pvSensor, portMAX_DELAY);
+    	xStatus = xQueueReceive(Queue2_SensorHandle, &Sensor_local, 0);
 		if( xStatus == pdPASS )
 		{
 
-			xQueueSendToBack(Queue3_PosHandle, &target_pos, 0);
+			xStatus = xQueueReceive(Queue1_ComHandle, &target_pos, portMAX_DELAY);
+			if( xStatus == pdPASS )
+			{
+				//if(Sensor_local.raw_angle != target_pos){
+				xQueueSendToBack(Queue3_PosHandle, &target_pos, 0);
+				//}
+			}
+		}
 
-    	}
 
     }
 }
@@ -286,10 +317,8 @@ void StartInputHIDTask(void *argument) {
 
 void StartOutputHIDTask(void *argument) {
     // 1. Variable local para recibir la COPIA de los datos del sensor
-    EncoderData_t* sensor_local;
+    EncoderData_t sensor_local;
 
-    // 2. Estructura del reporte (la que definimos de 10 bytes)
-    report_send.reportID = 0x01; // ID de reporte de entrada al PC
 
     BaseType_t xStatus;
 
@@ -303,7 +332,7 @@ void StartOutputHIDTask(void *argument) {
 
 				// 3. Mapeo de datos del sensor al reporte HID
 				// Casteamos a los tipos que definimos en la struct empaquetada
-        		 UpdateHIDData(sensor_data.total_degrees, sensor_data.velocity_dps);
+        		 UpdateHIDData(sensor_local.total_degrees, sensor_local.velocity_dps);
 
 
 				// 4. Envío por USB
@@ -377,10 +406,14 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
 /* Función que se ejecuta cada vez que el timer vence */
 void CallbackTimerSensor(TimerHandle_t xTimer){
 
-	if (HAL_I2C_Mem_Read_DMA(&ENCODER_I2C_HANDLE,AS5600_ADDR, ANGLE_REG_MSB, I2C_MEMADD_SIZE_8BIT, sensor_data.buffer, 2) != HAL_OK) {
+	HAL_StatusTypeDef DMAStatus = HAL_I2C_Mem_Read_DMA(&ENCODER_I2C_HANDLE,AS5600_ADDR, ANGLE_REG_MSB, I2C_MEMADD_SIZE_8BIT, sensor_data.buffer, 2);
 			// Si el bus está trabado (BUSY), reiniciamos el periférico
+		if ( DMAStatus != HAL_OK) {
 			__HAL_I2C_DISABLE(&ENCODER_I2C_HANDLE);
 			__HAL_I2C_ENABLE(&ENCODER_I2C_HANDLE);
+		}else if (DMAStatus == HAL_OK){
+			int pepin = 0;
+			pepin++;
 		}
 }
 

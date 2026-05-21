@@ -52,3 +52,18 @@ Este proyecto implementa un sistema de control de posición de lazo cerrado (ser
     sudo apt install libudev1 libudev-dev pkg-config
     sudo apt install libhidapi-dev
    ```
+
+## Flashear la placa Bluepill con OpenOCD
+
+Dentro del directorio Boards/Bluepill_F103/Debug se 
+ 
+```bash
+openocd -f interface/stlink.cfg -f target/stm32f1x.cfg -c "program Bluepill_F103.elf verify reset exit"
+   ```
+
+
+
+## Como ver el descriptor de reporte del USB HID
+```bash
+sudo usbhid-dump -m 0483:5750 -e descriptor
+   ```
