@@ -10,6 +10,8 @@
 
 #include "main.h"
 #include "board_config.h"
+#include "timers.h"
+
 
 #include <stdlib.h>
 
@@ -26,6 +28,7 @@ void StartInputHIDTask(void * argument);  // Procesa reportes recibidos
 void StartOutputHIDTask(void * argument); // Envía telemetría a la PC
 void StartMonitorTask(void * argument);   // Seguridad y LEDs
 
+void CallbackTimerSensor(TimerHandle_t xTimer);
 
 
 #endif /* TASKSTEPPER_H_ */

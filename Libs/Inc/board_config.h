@@ -13,6 +13,8 @@
 // --- Definiciones de Pines ---
 #ifdef STM32F103xB  // Si es la Bluepill
 
+extern I2C_HandleTypeDef hi2c1;
+
 	#define GPIO_LED_Pin GPIO_PIN_13
 	#define GPIO_LED_GPIO_Port GPIOC
 	#define TIM2_STEP_Pin GPIO_PIN_1
@@ -35,8 +37,7 @@
 	#define DRIVER_TIMER_HANDLE  htim2
 	#define DRIVER_TIMER_INSTANCE TIM2
 	#define DRIVER_TIMER_CHANNEL TIM_CHANNEL_2
-	#define SAMPLE_TIMER_HANDLE htim4
-	#define SAMPLE_TIMER_INSTANCE TIM4
+
 #elif
 #ifdef STM32F411xE  // Si es la Discovery
   	#define GPIO_LED_Pin GPIO_PIN_13

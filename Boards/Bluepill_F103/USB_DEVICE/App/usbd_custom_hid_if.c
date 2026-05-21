@@ -184,11 +184,16 @@ static int8_t CUSTOM_HID_OutEvent_FS(uint8_t event_idx, uint8_t state)
 
 
 	 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-	// Avisamos a la tarea que hay un nuevo reporte de salida (OUT)
-	// Despertamos a la Sensor_Task para que procese los datos
-	xSemaphoreGiveFromISR(Sem1_HID_RxHandle, &xHigherPriorityTaskWoken);
-	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	// Avisamos a la tarea que hay un nuevo reporte de entrada
+	// Despertamos a la inputHIDTask para que procese los datos
 	USBD_CUSTOM_HID_ReceivePacket(&hUsbDeviceFS);
+	BaseType_t status;
+	status = xSemaphoreGiveFromISR(Sem1_HID_RxHandle, &xHigherPriorityTaskWoken);
+	 if (status == pdFAIL)
+	  {
+	    return (uint8_t)USBD_FAIL;
+	  }
+	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 	return (USBD_OK);
   /* USER CODE END 6 */
 }

@@ -95,13 +95,18 @@ int main(void)
   MX_DMA_Init();
   MX_I2C1_Init();
   MX_TIM2_Init();
-  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
 
-  xTaskCreate(AppInit, "TaskCreate", 100, NULL, 1, NULL);
+  BaseType_t status;
+  status = xTaskCreate(AppInit, "TaskCreate", 100, NULL, 10, NULL) ;
+  if( status == pdFAIL){
+	  Error_Handler();
+  }
+
   vTaskStartScheduler();
   /* USER CODE END 2 */
+
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -175,15 +180,7 @@ void SystemClock_Config(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-  if (htim->Instance == SAMPLE_TIMER_INSTANCE)
-  {
 
-	  if (HAL_I2C_Mem_Read_DMA(&hi2c1,AS5600_ADDR, ANGLE_REG_MSB, I2C_MEMADD_SIZE_8BIT, sensor_data.buffer, 2) != HAL_OK) {
-			// Si el bus está trabado (BUSY), reiniciamos el periférico
-			__HAL_I2C_DISABLE(&hi2c1);
-			__HAL_I2C_ENABLE(&hi2c1);
-		}
-  }
 
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM3)
