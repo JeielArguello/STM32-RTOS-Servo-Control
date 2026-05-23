@@ -37,7 +37,7 @@ typedef struct {
 // Funciones Principales
 void Stepper_Init(Stepper_Handler* hmotor);
 void Stepper_SetMicrostepping(Stepper_Handler* hmotor, Stepper_Mode mode);
-void Stepper_Move(Stepper_Handler* hmotor, int32_t steps, uint32_t speed_hz);
+HAL_StatusTypeDef Stepper_Move(Stepper_Handler* hmotor, int32_t steps, uint32_t speed_hz);
 void Stepper_Stop(Stepper_Handler* hmotor);
 
 #endif

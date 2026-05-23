@@ -100,7 +100,19 @@ int main(int argc, char **argv)
             if (line[i] == 'S' || line[i] == 's') { cmd = 'S'; break; }
             if (line[i] == 'Q' || line[i] == 'q') { cmd = 'Q'; break; }
         }
-        if (!cmd) continue;
+
+        // Also accept a numeric degree input (e.g. "45" or "-30").
+        char *endptr = NULL;
+        long deg = strtol(line, &endptr, 10);
+        if (!cmd) {
+            if (endptr != line) {
+                // Got a numeric degree
+                cmd = 'G'; // G = grado (numeric)
+            } else {
+                continue;
+            }
+        }
+
         if (cmd == 'Q') break;
 
         // Prepare a simple HID output report. First byte is report ID (0 if unused)
@@ -119,6 +131,11 @@ int main(int argc, char **argv)
         } else if (cmd == 'S') {
             report.position = 0;    // stop
             report.velocity = 0;
+        } else if (cmd == 'G') {
+            // Use the numeric degree entered by the user as position
+            report.position = (int32_t)deg;
+            report.velocity = 0;
+            printf("Using numeric degree: %ld -> position set to %d\n", deg, (int)report.position);
         }
         printf("Sending command %c to device...\n", cmd);
         printf("Report data size: %zu bytes\n", sizeof(report));

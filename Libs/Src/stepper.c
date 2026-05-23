@@ -16,6 +16,11 @@ void Stepper_SetMicrostepping(Stepper_Handler* hmotor, Stepper_Mode mode) {
             HAL_GPIO_WritePin(hmotor->m1.port, hmotor->m1.pin, 0);
             HAL_GPIO_WritePin(hmotor->m2.port, hmotor->m2.pin, 0);
             break;
+        case STEP_HALF:
+        	HAL_GPIO_WritePin(hmotor->m0.port, hmotor->m0.pin, 1);
+			HAL_GPIO_WritePin(hmotor->m1.port, hmotor->m1.pin, 0);
+			HAL_GPIO_WritePin(hmotor->m2.port, hmotor->m2.pin, 0);
+			break;
         case STEP_SIXTEENTH:
             HAL_GPIO_WritePin(hmotor->m0.port, hmotor->m0.pin, 0);
             HAL_GPIO_WritePin(hmotor->m1.port, hmotor->m1.pin, 0);
@@ -31,8 +36,8 @@ void Stepper_SetMicrostepping(Stepper_Handler* hmotor, Stepper_Mode mode) {
     }
 }
 
-void Stepper_Move(Stepper_Handler* hmotor, int32_t steps, uint32_t speed_hz) {
-    if (steps == 0) return;
+HAL_StatusTypeDef Stepper_Move(Stepper_Handler* hmotor, int32_t steps, uint32_t speed_hz) {
+    if (steps == 0) return HAL_OK;
 
     // 1. Dirección (Pin DIR)
     HAL_GPIO_WritePin(hmotor->dir.port, hmotor->dir.pin, (steps > 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -44,12 +49,23 @@ void Stepper_Move(Stepper_Handler* hmotor, int32_t steps, uint32_t speed_hz) {
     // Frecuencia de toggle = speed_hz * 2. Periodo = 1.000.000 / (speed_hz * 2)
     hmotor->period_ticks = 1000000 / (speed_hz * 2);
 
-    // 4. Configurar el primer evento de Output Compare
+    // 4. Configurar el primer evento de Output Compare con protección contra desbordamiento
+    // El ARR (Auto Reload Register) de TIM2 es 65535; evitamos que el compare esté en el pasado
     uint32_t now = __HAL_TIM_GET_COUNTER(hmotor->htim);
-    __HAL_TIM_SET_COMPARE(hmotor->htim, hmotor->channel, now + hmotor->period_ticks);
+    uint32_t compare_val = now + hmotor->period_ticks;
+    
+    // Si compare_val > 65535, hace wrap automático en TIM2 (32-bit), pero hay margen de error
+    // Mejor: programar con un mínimo de tiempo para asegurar que dispara
+    if (compare_val < now) {
+        // Hubo wrap-around; reintentar
+        compare_val = hmotor->period_ticks + 100;  // +100 para seguridad
+    }
+    
+    __HAL_TIM_SET_COMPARE(hmotor->htim, hmotor->channel, compare_val);
 
     // 5. Iniciar Timer con Interrupción
-    HAL_TIM_OC_Start_IT(hmotor->htim, hmotor->channel);
+    __HAL_TIM_CLEAR_FLAG(hmotor->htim, TIM_FLAG_CC2);
+    return HAL_TIM_OC_Start_IT(hmotor->htim, hmotor->channel);
 }
 
 void Stepper_Stop(Stepper_Handler* hmotor) {

@@ -11,13 +11,14 @@
 
 #define AS5600_ADDR (0x36 << 1)
 #define ANGLE_REG_MSB 0x0E
+#define AS5600_RESOLUTION 4096
 
 
 typedef struct {
     int32_t  rotations;      // 4 bytes - Cantidad de vueltas completas
-    int32_t  total_degrees;  // 4 bytes - Posición absoluta en grados
+    int32_t  pos_angulo;  // 4 bytes - Posición absoluta en grados
     int32_t  velocity_dps;   // 4 bytes - Velocidad en grados/segundo
-    uint16_t raw_angle;      // 2 bytes - Valor crudo del registro (0-4095)
+    uint16_t position_sensor;      // 2 bytes - Valor crudo del registro (0-4095)
     uint8_t  buffer[2];      // 2 bytes - Buffer para el DMA (I2C)
     uint8_t  status;         // 1 byte  - Flags de error o estado del sensor
     uint8_t  reserved;       // 1 byte  - Padding manual para alinear a 32 bits
