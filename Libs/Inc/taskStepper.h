@@ -10,7 +10,6 @@
 
 #include "main.h"
 #include "board_config.h"
-#include "timers.h"
 
 
 #include <stdlib.h>

@@ -49,15 +49,10 @@ HAL_StatusTypeDef Stepper_Move(Stepper_Handler* hmotor, int32_t steps, uint32_t 
     // Frecuencia de toggle = speed_hz * 2. Periodo = 1.000.000 / (speed_hz * 2)
     hmotor->period_ticks = 1000000 / (speed_hz * 2);
 
-    // 4. Configurar el primer evento de Output Compare con protección contra desbordamiento
-    // El ARR (Auto Reload Register) de TIM2 es 65535; evitamos que el compare esté en el pasado
     uint32_t now = __HAL_TIM_GET_COUNTER(hmotor->htim);
     uint32_t compare_val = now + hmotor->period_ticks;
     
-    // Si compare_val > 65535, hace wrap automático en TIM2 (32-bit), pero hay margen de error
-    // Mejor: programar con un mínimo de tiempo para asegurar que dispara
     if (compare_val < now) {
-        // Hubo wrap-around; reintentar
         compare_val = hmotor->period_ticks + 100;  // +100 para seguridad
     }
     

@@ -31,6 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdint.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "tim.h"
@@ -38,8 +39,8 @@ extern "C" {
 #include "queue.h"
 #include "Encoder_types.h"
 #include "stepper.h"
+#include "timers.h"
 #include "taskStepper.h"
-#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
