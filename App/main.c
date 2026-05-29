@@ -17,7 +17,7 @@
 typedef struct __attribute__((packed)) {
     uint8_t reportID;
     int32_t position;
-    uint32_t velocity;
+    int32_t velocity;
     uint8_t status_flags;
 } HID_Report_t;
 

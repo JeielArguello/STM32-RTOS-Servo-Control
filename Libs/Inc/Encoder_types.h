@@ -16,9 +16,9 @@
 
 typedef struct {
     int32_t  rotations;      // 4 bytes - Cantidad de vueltas completas
-    int32_t  pos_angulo;  // 4 bytes - Posición absoluta en grados
-    int32_t  velocity_dps;   // 4 bytes - Velocidad en grados/segundo
-    uint16_t position_sensor;      // 2 bytes - Valor crudo del registro (0-4095)
+    int32_t  angle_deg;      // 4 bytes - Ángulo absoluto en grados (rotations × 360 + sensor)
+    int32_t  speed_rpm;      // 4 bytes - Velocidad en RPM
+    uint16_t raw_position;   // 2 bytes - Valor crudo del registro (0-4095)
     uint8_t  buffer[2];      // 2 bytes - Buffer para el DMA (I2C)
     uint8_t  status;         // 1 byte  - Flags de error o estado del sensor
     uint8_t  reserved;       // 1 byte  - Padding manual para alinear a 32 bits

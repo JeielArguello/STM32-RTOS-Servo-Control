@@ -6,12 +6,12 @@
 *.ko
 *.obj
 *.elf
-
+*.mk
 # Linker output
 *.ilk
 *.map
 *.exp
-
+*.list
 # Precompiled Headers
 *.gch
 *.pch

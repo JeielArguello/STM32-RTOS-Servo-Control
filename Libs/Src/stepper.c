@@ -1,7 +1,29 @@
 #include "stepper.h"
 
+// Conversión RPM a Hz (parametrizada por modo de microstepping)
+// pasos_totales = 200 × modo
+// Hz = (RPM × 200 × modo × 2 toggles/paso) / 60 seg
+uint32_t Stepper_RPM_to_Hz(Stepper_Handler* hmotor, int32_t rpm) {
+    if (rpm < 0) rpm = -rpm;
+    uint32_t pasos_por_vuelta = 200 * (hmotor->current_mode+1);
+    return (rpm * pasos_por_vuelta * 2) / 60;
+}
+
+// Conversión Hz a RPM (inversa, parametrizada por modo)
+// RPM = (Hz × 60) / (200 × modo × 2)
+int32_t Stepper_Hz_to_RPM(Stepper_Handler* hmotor, int32_t hz) {
+    uint32_t pasos_por_vuelta = 200 * (hmotor->current_mode+1);
+    return (hz * 60) / (pasos_por_vuelta * 2);
+}
+
+
 void Stepper_Init(Stepper_Handler* hmotor) {
     // Aseguramos que el motor esté detenido al iniciar
+    hmotor->steps_to_move = 0;
+    hmotor->period_ticks = 0;
+    hmotor->is_running = 0;  // Inicializar como detenido
+    // Setear CCR = 15 que garantice el ancho de pulso mínimo que exige el datasheet del DRV8825
+    __HAL_TIM_SET_COMPARE(hmotor->htim, hmotor->channel, 15);
     Stepper_Stop(hmotor);
 }
 
@@ -36,34 +58,61 @@ void Stepper_SetMicrostepping(Stepper_Handler* hmotor, Stepper_Mode mode) {
     }
 }
 
-HAL_StatusTypeDef Stepper_Move(Stepper_Handler* hmotor, int32_t steps, uint32_t speed_hz) {
-    if (steps == 0) return HAL_OK;
+void Stepper_SetSteps(Stepper_Handler* hmotor, int32_t steps) {
+    // Setear dirección basada en el signo de steps
+    HAL_GPIO_WritePin(hmotor->dir.port, hmotor->dir.pin, (steps > 0) ? GPIO_PIN_RESET : GPIO_PIN_SET);
 
-    // 1. Dirección (Pin DIR)
-    HAL_GPIO_WritePin(hmotor->dir.port, hmotor->dir.pin, (steps > 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    // Cantidad de pasos a ejecutar (cada paso = 2 toggles en PWM mode)
+    hmotor->steps_to_move = abs(steps);
+}
 
-    // 2. Preparar conteo (cada paso requiere 2 toggles: subida y bajada)
-    hmotor->steps_to_move = abs(steps) * 2;
-
-    // 3. Calcular periodo (Asumiendo Timer clock a 1MHz para precisión de 1us)
-    // Frecuencia de toggle = speed_hz * 2. Periodo = 1.000.000 / (speed_hz * 2)
-    hmotor->period_ticks = 1000000 / (speed_hz * 2);
-
-    uint32_t now = __HAL_TIM_GET_COUNTER(hmotor->htim);
-    uint32_t compare_val = now + hmotor->period_ticks;
+void Stepper_SetSpeed(Stepper_Handler* hmotor, int32_t speed_rpm) {
+    // speed_rpm: velocidad en RPM 
+    // La conversión a Hz ocurre aquí internamente
     
-    if (compare_val < now) {
-        compare_val = hmotor->period_ticks + 100;  // +100 para seguridad
+    HAL_GPIO_WritePin(hmotor->dir.port, hmotor->dir.pin, (speed_rpm > 0) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+
+    // Setear RPM deseada para calcular errorres o debug
+    hmotor->steps_to_move = speed_rpm;  
+    // Convertir RPM a Hz
+    uint32_t speed_hz = Stepper_RPM_to_Hz(hmotor, speed_rpm);
+    
+    // Limitar para timer de 16 bits
+    if (speed_hz > 65535) {
+        speed_hz = 65535;
+    }
+    if (speed_hz < 10) {
+        speed_hz = 10;  // Mínimo para estabilidad
     }
     
-    __HAL_TIM_SET_COMPARE(hmotor->htim, hmotor->channel, compare_val);
+    // Guardar para referencia
+    hmotor->period_ticks = speed_hz;
+    
+    // Setear AUTORELOAD (controla la frecuencia del PWM)
+    __HAL_TIM_SET_AUTORELOAD(hmotor->htim, speed_hz);
+}
 
-    // 5. Iniciar Timer con Interrupción
+HAL_StatusTypeDef Stepper_Start(Stepper_Handler* hmotor) {
+    if (hmotor->steps_to_move == 0) return HAL_ERROR;
+    
+    // Verificar si el timer ya está activo (evitar llamar Start dos veces)
+    if (hmotor->is_running) return HAL_OK;  // Ya está corriendo, no hacer nada
+    
+    // Limpiar flags y iniciar en PWM mode
+    // El ISR se dispara una vez por período (1 ISR = 1 paso)
     __HAL_TIM_CLEAR_FLAG(hmotor->htim, TIM_FLAG_CC2);
-    return HAL_TIM_OC_Start_IT(hmotor->htim, hmotor->channel);
+    HAL_StatusTypeDef status = HAL_TIM_OC_Start(hmotor->htim, hmotor->channel);
+    
+    // Marcar como activo si la llamada fue exitosa
+    if (status == HAL_OK) {
+        hmotor->is_running = 1;
+    }
+    
+    return status;
 }
 
 void Stepper_Stop(Stepper_Handler* hmotor) {
-    HAL_TIM_OC_Stop_IT(hmotor->htim, hmotor->channel);
+    HAL_TIM_OC_Stop(hmotor->htim, hmotor->channel);
     hmotor->steps_to_move = 0;
+    hmotor->is_running = 0;  // Marcar como detenido
 }
