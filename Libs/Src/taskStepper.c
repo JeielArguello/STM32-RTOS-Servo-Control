@@ -197,7 +197,7 @@ void StartDriverTask(void *argument) {
 	// ===== PRUEBA INICIAL: Una vuelta =====
 	MotorDebug_Start(360);  // 1 vuelta = 360 grados
 	Stepper_SetSteps(&motor, 360);  // 360 Hz = 1 vuelta por segundo (200 pasos/vuelta × 2 toggles/paso = 400 Hz para 1 vuelta/s, pero ajustamos a 360 para compensar ineficiencias)
-	Stepper_SetSpeed(&motor, 1000);  // 500 Hz para prueba
+	Stepper_SetSpeed(&motor, 60);  // 60 RPM para prueba
 	HAL_StatusTypeDef test_status = Stepper_Start(&motor);
 	if (test_status != HAL_OK) {
 		ERROR_TASK(TASK_DRIVER);
@@ -219,7 +219,7 @@ void StartDriverTask(void *argument) {
 			MotorDebug_Start(rpm_from_control);
 			
 			// Si RPM es cercana a 0, parar el motor
-			if(rpm_from_control > -10 && rpm_from_control < 10) {
+			if(rpm_from_control > -5 && rpm_from_control < 5) {
 				Stepper_Stop(&motor);
 			} else {
 				// Setear velocidad en RPM (la conversión a Hz ocurre dentro de Stepper_SetSpeed)
@@ -227,6 +227,7 @@ void StartDriverTask(void *argument) {
 				
 				// Arrancar motor
 				if (!motor.is_running) {  // Solo llamar Start si el motor no está corriendo (evitar reiniciar el timer innecesariamente)
+					Stepper_SetSteps(&motor, 100);  
 					test_status = Stepper_Start(&motor);
 					if (test_status != HAL_OK) {
 						ERROR_TASK(TASK_DRIVER);
@@ -267,6 +268,7 @@ void StartSensorTask(void *argument) {
 					sensor_data.rotations = 0;
 					sensor_data.angle_deg = (current_raw * 360) / 4096;  // Ángulo inicial en grados
 					last_degrees = sensor_data.angle_deg;
+					sensor_data.speed_rpm = 0;
 					xSemaphoreGive(Sem3_Mutex_Sensor);
 				}
                 first_read = 0;
@@ -281,10 +283,11 @@ void StartSensorTask(void *argument) {
 				sensor_data.raw_position = current_raw;
 
 				// Lógica de conteo de vueltas (detectar transiciones)
-				if (diff > 2048) {
+				// Usar >= / <= para cubrir el caso límite (exactamente 180°)
+				if (diff >= 2048) {
 					// Transición de 4095 -> 0 (reverse)
 					sensor_data.rotations--;
-				} else if (diff < -2048) {
+				} else if (diff <= -2048) {
 					// Transición de 0 -> 4095 (forward)
 					sensor_data.rotations++;
 				}
@@ -296,7 +299,8 @@ void StartSensorTask(void *argument) {
 				pos_temp = ((int64_t)sensor_data.rotations * 360) + 
 							   ((int64_t)sensor_data.raw_position * 360 / 4096);
 				sensor_data.angle_deg = (int32_t)pos_temp;
-
+				// Calcular velocidad en RPM 
+				sensor_data.speed_rpm = motor.current_rpm; 
 
 				xSemaphoreGive(Sem3_Mutex_Sensor);
 
@@ -316,16 +320,31 @@ void StartControlTask(void *argument) {
 	BaseType_t xStatus;
 
 	// GANANCIAS DEL PID EN Q16
-	int64_t Kp = 11525;  // Proporcional: 0.176 RPM/tick
-	int64_t Ki = 3;      // Integral: 0.000046 RPM/(tick·seg)
+	int64_t Kp_q16 = 11059;  // Proporcional: 0.017 RPM/tick
+	int64_t Ki_q16 = 3;      // Integral: 0.000046 RPM/(tick·seg)
+	int64_t max_rpm_ramp = 50;  // Máxima aceleración en control (RPM/ciclo)
 
 	int64_t error_ticks = 0;
 	int64_t integral_error = 0;
+	int32_t rpm_output_prev = 0;  // RPM anterior para limitar rampa
 
+	int64_t current_ticks = 0;
+	int64_t error_ticks_q16 = 0;
 	TickType_t tiempo_actual = 0, tiempo_prev = xTaskGetTickCount();
 
+	// Revisar si hay nuevo setpoint del usuario
+	int32_t set_point_new = 0;
+
+	uint32_t dt_ms = 0;
+	int64_t dt_q16 = 0;
+
+	int64_t p_term = 0;
+	int64_t i_term = 0;
+
+	int32_t rpm_target = 0;
 	// Esperar a que driver esté activa
 	vTaskDelay(pdMS_TO_TICKS(2000));
+	rpm_output_prev = 0;  // Inicializar rampa
     for(;;){
     	// Esperar a que el SensorTask publique datos frescos
     	xSemaphoreTake(Sem6_SensorReady, portMAX_DELAY);
@@ -336,52 +355,81 @@ void StartControlTask(void *argument) {
 			xSemaphoreGive(Sem3_Mutex_Sensor);
 		}
 
-		// Revisar si hay nuevo setpoint del usuario
-		int64_t set_point_new = 0;
 		xStatus = xQueueReceive(Queue1_ComHandle, &set_point_new, 0);
 		if(xStatus == pdPASS) {
-			set_point_ticks = set_point_new;
+			set_point_ticks = (int64_t)set_point_new;
 			integral_error = 0;  // Resetear integral al cambiar setpoint
+			error_ticks = 0;
 		}
 
 		// Calcular tiempo transcurrido
 		tiempo_actual = xTaskGetTickCount();
-		uint32_t dt_ms = (tiempo_actual - tiempo_prev) * portTICK_PERIOD_MS;
+		dt_ms = (tiempo_actual - tiempo_prev) * portTICK_PERIOD_MS;
 		
 
 		// Calcular posición actual en ticks (multivuelta)
-		int64_t current_ticks = ((int64_t)Sensor_local.rotations * 4096) + Sensor_local.raw_position;
+		// Hacer casts por separado para evitar promociones/overflow en enteros
+		current_ticks = ((int64_t)Sensor_local.rotations * 4096) + (int64_t)Sensor_local.raw_position;
 		
 		// Error de posición: debe ser negativo cuando está atrás (para girar atrás)
 		error_ticks =  set_point_ticks - current_ticks;
 
-		// ===== PID SIMPLE =====
-		// P: proporcional al error
-		int64_t p_term = Q16_MUL(Kp, Q16_FROM_INT(error_ticks));
-
-		// I: integral del error
-		if(dt_ms > 0 && error_ticks != 0) {
-			int64_t dt_q16 = Q16_DIV(dt_ms, 1000);  // dt en segundos, Q16
-			integral_error += Q16_MUL(Ki, Q16_MUL(Q16_FROM_INT(error_ticks), dt_q16));
-			
-			// Anti-windup simple
-			int64_t max_integral = Q16_FROM_INT(5000);
-			if(integral_error > max_integral) integral_error = max_integral;
-			if(integral_error < -max_integral) integral_error = -max_integral;
-		}
+		// ===== ESTRATEGIA ADAPTATIVA =====
+		// Si el error es MUY grande (>1000 ticks), usar rampa rápida
+		// Si el error es moderado (100-1000), usar PID con anti-windup fuerte
+		// Si el error es pequeño (<100), usar PID fino
 		
-		int64_t i_term = integral_error;
+		
+		if(abs(error_ticks) > 1000) {
+			// Error grande: rampa rápida hacia velocidad máxima
+			if(error_ticks > 0) {
+				rpm_target = 200;  // Ir rápido en dirección positiva
+			} else {
+				rpm_target = -200;  // Ir rápido en dirección negativa
+			}
+		} else {
+			// Error pequeño-moderado: usar PID
+			error_ticks_q16 = Q16_FROM_INT(error_ticks);
+			// P: proporcional al error
+			p_term = Q16_MUL(Kp_q16, error_ticks_q16);
 
-		// RPM = P + I
-		int64_t rpm_q16 = p_term + i_term;
-		int32_t rpm_output = Q16_TO_INT(rpm_q16);
+			// I: integral del error (CON ANTI-WINDUP MÁS FUERTE)
+			if(dt_ms > 0 && abs(error_ticks) > 5) {  // Solo integrar si el error es significativo
+				dt_q16 = Q16_DIV(dt_ms, 1000);  // dt en segundos, Q16
+				integral_error += Q16_MUL(Ki_q16, Q16_MUL(error_ticks_q16, dt_q16));
+				
+				// Anti-windup MÁS AGRESIVO: limitar a ±1000 (era 5000)
+				int64_t max_integral = Q16_FROM_INT(1000);
+				if(integral_error > max_integral) integral_error = max_integral;
+				if(integral_error < -max_integral) integral_error = -max_integral;
+			} else if(abs(error_ticks) <= 5) {
+				// Si el error es muy pequeño, ir reduciendo integral lentamente
+				integral_error = (integral_error * 90) / 100;  // Decay del 10% por ciclo
+			}
+			
+			i_term = integral_error;
 
-		// Limitar RPM (driver manejará frenar si RPM < 5)
-		if(rpm_output > 1500) rpm_output = 1500;
-		if(rpm_output < -1500) rpm_output = -1500;
+			// RPM = P + I
+			int64_t rpm_q16 = p_term + i_term;
+			rpm_target = Q16_TO_INT(rpm_q16);
+		}
+
+		// ===== LIMITAR TASA DE CAMBIO DE RPM (rampa en control) =====
+		int32_t rpm_delta = rpm_target - rpm_output_prev;
+		if(rpm_delta > max_rpm_ramp) {
+			rpm_target = rpm_output_prev + max_rpm_ramp;  // Acelerar suavemente
+		} else if(rpm_delta < -max_rpm_ramp) {
+			rpm_target = rpm_output_prev - max_rpm_ramp;  // Desacelerar suavemente
+		}
+
+		// Limitar RPM final (driver manejará frenar si RPM < 5)
+		if(rpm_target > 200) rpm_target = 200;
+		if(rpm_target < -200) rpm_target = -200;
+
+		rpm_output_prev = rpm_target;  // Guardar para siguiente ciclo
 
 		// ===== ENVIAR RPM AL DRIVER =====
-		if(xQueueSendToBack(Queue3_PosHandle, &rpm_output, 0) == pdFAIL){
+		if(xQueueSendToBack(Queue3_PosHandle, &rpm_target, 0) == pdFAIL){
 			ERROR_TASK(TASK_CONTROL);
 		}
 
@@ -395,8 +443,8 @@ void StartInputHIDTask(void *argument) {
 
 
     HID_Report_t incoming_report;
-    int64_t new_setpoint_ticks;
-    int64_t new_setpoint_deg;
+    int32_t new_setpoint_ticks;
+    int32_t new_setpoint_deg;
     USBD_CUSTOM_HID_HandleTypeDef *hhid;
 
     for(;;) {
@@ -414,7 +462,7 @@ void StartInputHIDTask(void *argument) {
 			if (incoming_report.reportID == 0x02) { // Reporte de consignas
 
 				// El PC manda una nueva posición deseada en grados
-				new_setpoint_deg = (int64_t)incoming_report.position;  // Posición en grados
+				new_setpoint_deg = incoming_report.position;  // Posición en grados
 
 				// Convertir grados a ticks (1 vuelta = 360 grados = 4096 ticks)
 				new_setpoint_ticks = (new_setpoint_deg * 4096) / 360;

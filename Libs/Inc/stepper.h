@@ -29,6 +29,7 @@ typedef struct {
     uint32_t channel;
 
     // Estado de Control
+    int32_t current_rpm;  // Velocidad actual en RPM (para aceleración suave)
     volatile uint32_t steps_to_move;
     uint32_t period_ticks;
     Stepper_Mode current_mode;
