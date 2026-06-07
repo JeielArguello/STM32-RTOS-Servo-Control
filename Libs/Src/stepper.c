@@ -81,6 +81,7 @@ void Stepper_SetSpeed(Stepper_Handler* hmotor, int32_t speed_rpm) {
     uint32_t speed_hz = Stepper_RPM_to_Hz(hmotor, speed_rpm);
     speed_hz = (speed_hz == 0) ? 1 : speed_hz;  // Evitar división por cero
     
+    
     uint32_t arr_value = (1000000  / speed_hz) - 1;
     // Limitar para timer de 16 bits
     if (arr_value > 65535) {

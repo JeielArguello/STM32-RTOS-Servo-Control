@@ -1,6 +1,8 @@
 #include "tim_debug.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include <stdint.h>
+#include <string.h>
 
 // Estructura global de debug
 TIM2_Debug_t tim2_debug = {0};

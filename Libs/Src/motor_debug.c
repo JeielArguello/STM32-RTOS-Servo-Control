@@ -1,6 +1,8 @@
 #include "motor_debug.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include <stdint.h>
+#include <string.h>
 
 /* ============= Variables Globales ============= */
 
@@ -9,7 +11,7 @@ static MotorDebug_t motor_data = {0};
 /* ============= Funciones Implementadas ============= */
 
 void MotorDebug_Init(void) {
-    motor_data.setpoint_deg = 0;
+    memset(&motor_data, 0, sizeof(MotorDebug_t));
     motor_data.pos_actual = 0;
     motor_data.pos_max_alcanzada = 0;
     motor_data.error_pos_max = 0;
@@ -23,12 +25,13 @@ void MotorDebug_Init(void) {
     motor_data.samples_collected = 0;
 }
 
-void MotorDebug_Start(int32_t setpoint_deg) {
-    motor_data.setpoint_deg = setpoint_deg;
+void MotorDebug_Start(int32_t setpoint) {
+    // Setpoint es genérico (puede representar grados o RPM según uso)
+    motor_data.setpoint = setpoint;
     motor_data.pos_actual = 0;
     motor_data.pos_max_alcanzada = 0;
-    motor_data.error_pos_max = setpoint_deg;  // Error inicial = setpoint
-    motor_data.error_pos_actual = setpoint_deg;
+    motor_data.error_pos_max = (setpoint < 0) ? -setpoint : setpoint;  // Error inicial = |setpoint|
+    motor_data.error_pos_actual = (setpoint < 0) ? -setpoint : setpoint;
     motor_data.start_time_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
     motor_data.end_time_ms = 0;
     motor_data.duration_ms = 0;

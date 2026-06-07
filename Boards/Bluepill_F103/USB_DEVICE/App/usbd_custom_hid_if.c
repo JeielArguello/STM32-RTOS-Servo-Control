@@ -32,7 +32,6 @@
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
-static uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev);
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -111,7 +110,7 @@ __ALIGN_BEGIN static uint8_t CUSTOM_HID_ReportDesc_FS[USBD_CUSTOM_HID_REPORT_DES
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
-extern SemaphoreHandle_t Sem1_HID_RxHandle;
+extern TaskHandle_t hInputHIDTask;  // Para notificaciones desde USB ISR
 /* USER CODE END EXPORTED_VARIABLES */
 /**
   * @}
@@ -152,7 +151,6 @@ USBD_CUSTOM_HID_ItfTypeDef USBD_CustomHID_fops_FS =
 static int8_t CUSTOM_HID_Init_FS(void)
 {
   /* USER CODE BEGIN 4 */
-	USBD_CUSTOM_HID_ReceivePacket(&hUsbDeviceFS);
 
   return (USBD_OK);
   /* USER CODE END 4 */
@@ -178,21 +176,9 @@ static int8_t CUSTOM_HID_DeInit_FS(void)
 static int8_t CUSTOM_HID_OutEvent_FS(uint8_t event_idx, uint8_t state)
 {
   /* USER CODE BEGIN 6 */
-
-
-
-
-
 	 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-	// Avisamos a la tarea que hay un nuevo reporte de entrada
-	// Despertamos a la inputHIDTask para que procese los datos
-	USBD_CUSTOM_HID_ReceivePacket(&hUsbDeviceFS);
-	BaseType_t status;
-	status = xSemaphoreGiveFromISR(Sem1_HID_RxHandle, &xHigherPriorityTaskWoken);
-	 if (status == pdFAIL)
-	  {
-	    return (uint8_t)USBD_FAIL;
-	  }
+	// Despertar InputHIDTask mediante notificación
+	xTaskNotifyFromISR(hInputHIDTask, 0x01, eSetBits, &xHigherPriorityTaskWoken);
 	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 	return (USBD_OK);
   /* USER CODE END 6 */
@@ -216,30 +202,6 @@ static int8_t USBD_CUSTOM_HID_SendReport_FS(uint8_t *report, uint16_t len)
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
 /* USER CODE BEGIN PRIVATE_FUNCTIONS */
 
-/**
-  * @brief  USBD_CUSTOM_HID_ReceivePacket
-  *         Prepara el Endpoint OUT manual para la recepción de datos.
-  * @param  pdev: Instancia del dispositivo USB
-  * @retval Estado (USBD_OK o USBD_FAIL)
-  */
-static uint8_t USBD_CUSTOM_HID_ReceivePacket(USBD_HandleTypeDef *pdev)
-{
-  USBD_CUSTOM_HID_HandleTypeDef *hhid;
-
-  // En tu versión del stack se usa pClassData directamente
-  if (pdev->pClassData == NULL)
-  {
-    return (uint8_t)USBD_FAIL;
-  }
-
-  hhid = (USBD_CUSTOM_HID_HandleTypeDef *)pdev->pClassData;
-
-  /* Reanudamos el proceso USB Out usando la capa de bajo nivel (Link Layer)
-     0x01 es la dirección del Endpoint OUT típico para Custom HID en F1 */
-  USBD_LL_PrepareReceive(pdev, 0x01, hhid->Report_buf, USBD_CUSTOMHID_OUTREPORT_BUF_SIZE);
-
-  return (uint8_t)USBD_OK;
-}
 
 /* USER CODE END PRIVATE_FUNCTIONS */
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */

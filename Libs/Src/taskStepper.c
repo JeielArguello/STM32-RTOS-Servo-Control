@@ -20,10 +20,10 @@
 // 0.001 = 65 (aprox)
 #define Q16_SHIFT 16
 #define Q16_ONE (1LL << Q16_SHIFT)     // 1.0 en Q16
-#define Q16_FROM_INT(x) ((int64_t)(x) << Q16_SHIFT)
-#define Q16_TO_INT(x) ((int32_t)((x) >> Q16_SHIFT))
-#define Q16_MUL(a, b) (((a) * (b)) >> Q16_SHIFT)
-#define Q16_DIV(a, b) (((a) << Q16_SHIFT) / (b))
+#define Q16_FROM_INT(x) ((int64_t)(x) * Q16_ONE)
+#define Q16_TO_INT(x) ((int32_t)((int64_t)(x) / Q16_ONE))
+#define Q16_MUL(a, b) ((int64_t)(((int64_t)(a) * (int64_t)(b)) / Q16_ONE))
+#define Q16_DIV(a, b) ((int64_t)(((int64_t)(a) * Q16_ONE) / (int64_t)(b)))
 
 
 DebugStats_t debug_stats = {0};
@@ -49,8 +49,7 @@ TaskHandle_t hOutputHIDTask;
 TaskHandle_t hMonitorTask;
 
 /* Handles de Semáforos */
-SemaphoreHandle_t Sem1_HID_RxHandle;  // ISR USB -> InputHIDTask
-SemaphoreHandle_t Sem2_DMA_RxHandle;  // ISR DMA -> SensorTask
+// Sem1_HID_RxHandle y Sem2_DMA_RxHandle: reemplazados por notificaciones de tareas
 SemaphoreHandle_t Sem3_Mutex_Sensor; // Mutex del sensor
 SemaphoreHandle_t Sem6_SensorReady;  // Semáforo contador para notificar datos frescos
 TimerHandle_t xTimerSensorHandle;
@@ -66,17 +65,8 @@ TimerHandle_t xTimerSensorHandle;
 void AppInit(void * pvParameters){
 
 
-	Sem1_HID_RxHandle = xSemaphoreCreateBinary();
-	if(Sem1_HID_RxHandle  == NULL) {
-		// Error al crear el semáforo
-		ERROR_TASK(TASK_APP_INIT);
-	}
-
-	Sem2_DMA_RxHandle = xSemaphoreCreateBinary();
-	if(Sem2_DMA_RxHandle  == NULL) {
-		// Error al crear el semáforo
-		ERROR_TASK(TASK_APP_INIT);
-	}
+	// Sem1_HID_RxHandle y Sem2_DMA_RxHandle: ahora se usan notificaciones de tareas
+	// No requieren creación de semáforos, las tareas tienen notificaciones nativas
 
 	Sem3_Mutex_Sensor = xSemaphoreCreateMutex();
 	if(Sem3_Mutex_Sensor == NULL) {
@@ -118,7 +108,7 @@ void AppInit(void * pvParameters){
 
 	xTimerSensorHandle = xTimerCreate(
 	        "TimerSensor",               // Nombre para debug
-	        pdMS_TO_TICKS(100),            // Período: 100ms (frecuencia de lectura del AS5600 - más rápido para mejor sincronización)
+	        pdMS_TO_TICKS(50),            // Período: 100ms (frecuencia de lectura del AS5600 - más rápido para mejor sincronización)
 	        pdTRUE,                      // pdTRUE = Auto-reload (cíclico). pdFALSE = One-shot (se ejecuta una vez)
 	        (void *) 0,                  // ID del timer (útil si usás el mismo callback para varios timers)
 	        CallbackTimerSensor          // Función que se va a ejecutar
@@ -189,7 +179,7 @@ void StartDriverTask(void *argument) {
 	motor.m1 = (Stepper_Pin){GPIO_M1_GPIO_Port, GPIO_M1_Pin};
 	motor.m2 = (Stepper_Pin){GPIO_M2_GPIO_Port, GPIO_M2_Pin};
 	Stepper_Init(&motor);
-	Stepper_SetMicrostepping(&motor, STEP_FULL); // 200 pasos por vuelta
+	Stepper_SetMicrostepping(&motor, STEP_HALF); // 200 pasos por vuelta
 
 	BaseType_t xStatus;
 	int32_t rpm_from_control;
@@ -219,7 +209,7 @@ void StartDriverTask(void *argument) {
 			MotorDebug_Start(rpm_from_control);
 			
 			// Si RPM es cercana a 0, parar el motor
-			if(rpm_from_control > -5 && rpm_from_control < 5) {
+			if(rpm_from_control == 0) {
 				Stepper_Stop(&motor);
 			} else {
 				// Setear velocidad en RPM (la conversión a Hz ocurre dentro de Stepper_SetSpeed)
@@ -247,8 +237,8 @@ void StartSensorTask(void *argument) {
 	int64_t pos_temp=0;
 
     for(;;) {
-        // 1. Esperar al DMA (Sincronizado con TIM)
-        if(xSemaphoreTake(Sem2_DMA_RxHandle, portMAX_DELAY) == pdPASS) {
+        // 1. Esperar al DMA (Sincronizado con TIM) usando notificación
+        if(xTaskNotifyWait(0, 0x02, NULL, portMAX_DELAY) == pdPASS) {
 
             // 2. Procesar datos crudos fuera del mutex para minimizar latencia
         	current_raw = ((uint16_t)sensor_data.buffer[0] << 8) | sensor_data.buffer[1];
@@ -320,16 +310,17 @@ void StartControlTask(void *argument) {
 	BaseType_t xStatus;
 
 	// GANANCIAS DEL PID EN Q16
-	int64_t Kp_q16 = 11059;  // Proporcional: 0.017 RPM/tick
-	int64_t Ki_q16 = 3;      // Integral: 0.000046 RPM/(tick·seg)
-	int64_t max_rpm_ramp = 50;  // Máxima aceleración en control (RPM/ciclo)
-
+	int64_t Kp_q16 = 4000;  // Proporcional: 0.017 RPM/tick
+	int64_t Ki_q16 = 35;      // Integral: 0.000046 RPM/(tick·seg)
+	int64_t Kd_q16 = 40;       // Derivativo: 0 (no se usa)
+	
 	int64_t error_ticks = 0;
 	int64_t integral_error = 0;
 	int32_t rpm_output_prev = 0;  // RPM anterior para limitar rampa
 
 	int64_t current_ticks = 0;
 	int64_t error_ticks_q16 = 0;
+	int64_t prev_error_ticks = 0;  // Para derivativo
 	TickType_t tiempo_actual = 0, tiempo_prev = xTaskGetTickCount();
 
 	// Revisar si hay nuevo setpoint del usuario
@@ -340,11 +331,14 @@ void StartControlTask(void *argument) {
 
 	int64_t p_term = 0;
 	int64_t i_term = 0;
+	int64_t d_term = 0;
 
 	int32_t rpm_target = 0;
+	int64_t rpm_q16 = 0;
+
+	int64_t max_integral = 0;
 	// Esperar a que driver esté activa
 	vTaskDelay(pdMS_TO_TICKS(2000));
-	rpm_output_prev = 0;  // Inicializar rampa
     for(;;){
     	// Esperar a que el SensorTask publique datos frescos
     	xSemaphoreTake(Sem6_SensorReady, portMAX_DELAY);
@@ -360,6 +354,7 @@ void StartControlTask(void *argument) {
 			set_point_ticks = (int64_t)set_point_new;
 			integral_error = 0;  // Resetear integral al cambiar setpoint
 			error_ticks = 0;
+			prev_error_ticks = 0;
 		}
 
 		// Calcular tiempo transcurrido
@@ -374,57 +369,44 @@ void StartControlTask(void *argument) {
 		// Error de posición: debe ser negativo cuando está atrás (para girar atrás)
 		error_ticks =  set_point_ticks - current_ticks;
 
-		// ===== ESTRATEGIA ADAPTATIVA =====
-		// Si el error es MUY grande (>1000 ticks), usar rampa rápida
-		// Si el error es moderado (100-1000), usar PID con anti-windup fuerte
-		// Si el error es pequeño (<100), usar PID fino
-		
-		
-		if(abs(error_ticks) > 1000) {
-			// Error grande: rampa rápida hacia velocidad máxima
-			if(error_ticks > 0) {
-				rpm_target = 200;  // Ir rápido en dirección positiva
-			} else {
-				rpm_target = -200;  // Ir rápido en dirección negativa
-			}
-		} else {
-			// Error pequeño-moderado: usar PID
-			error_ticks_q16 = Q16_FROM_INT(error_ticks);
-			// P: proporcional al error
-			p_term = Q16_MUL(Kp_q16, error_ticks_q16);
 
-			// I: integral del error (CON ANTI-WINDUP MÁS FUERTE)
-			if(dt_ms > 0 && abs(error_ticks) > 5) {  // Solo integrar si el error es significativo
-				dt_q16 = Q16_DIV(dt_ms, 1000);  // dt en segundos, Q16
-				integral_error += Q16_MUL(Ki_q16, Q16_MUL(error_ticks_q16, dt_q16));
-				
-				// Anti-windup MÁS AGRESIVO: limitar a ±1000 (era 5000)
-				int64_t max_integral = Q16_FROM_INT(1000);
-				if(integral_error > max_integral) integral_error = max_integral;
-				if(integral_error < -max_integral) integral_error = -max_integral;
-			} else if(abs(error_ticks) <= 5) {
-				// Si el error es muy pequeño, ir reduciendo integral lentamente
-				integral_error = (integral_error * 90) / 100;  // Decay del 10% por ciclo
-			}
+		error_ticks_q16 = Q16_FROM_INT(error_ticks);
+		// P: proporcional al error
+		p_term = Q16_MUL(Kp_q16, error_ticks_q16);
+
+		// I: integral del error (CON ANTI-WINDUP MÁS FUERTE)
+		if(dt_ms > 0) {  // Solo integrar si el error es significativo
+			dt_q16 = Q16_DIV(dt_ms, 1000);  // dt en segundos, Q16
+			integral_error += Q16_MUL(Ki_q16, Q16_MUL(error_ticks_q16, dt_q16));
 			
-			i_term = integral_error;
-
-			// RPM = P + I
-			int64_t rpm_q16 = p_term + i_term;
-			rpm_target = Q16_TO_INT(rpm_q16);
+			// Anti-windup MÁS AGRESIVO: limitar a ±300 
+			max_integral = Q16_FROM_INT(300);
+			if(integral_error > max_integral) integral_error = max_integral;
+			if(integral_error < -max_integral) integral_error = -max_integral;
 		}
+		
+		i_term = integral_error;
+
+
+		// D: derivador
+
+		if (dt_ms > 0){
+			int64_t derivative = Q16_DIV((error_ticks_q16 - prev_error_ticks), dt_q16);
+            d_term = Q16_MUL(Kd_q16, derivative);
+		}else{
+            d_term = 0;
+		}
+		// RPM = P + I + D
+		rpm_q16 = p_term + i_term + d_term;
+		rpm_target = Q16_TO_INT(rpm_q16);
+	
 
 		// ===== LIMITAR TASA DE CAMBIO DE RPM (rampa en control) =====
-		int32_t rpm_delta = rpm_target - rpm_output_prev;
-		if(rpm_delta > max_rpm_ramp) {
-			rpm_target = rpm_output_prev + max_rpm_ramp;  // Acelerar suavemente
-		} else if(rpm_delta < -max_rpm_ramp) {
-			rpm_target = rpm_output_prev - max_rpm_ramp;  // Desacelerar suavemente
-		}
+		
 
 		// Limitar RPM final (driver manejará frenar si RPM < 5)
-		if(rpm_target > 200) rpm_target = 200;
-		if(rpm_target < -200) rpm_target = -200;
+		if(rpm_target > 225) rpm_target = 225;
+		if(rpm_target < -225) rpm_target = -225;
 
 		rpm_output_prev = rpm_target;  // Guardar para siguiente ciclo
 
@@ -434,6 +416,7 @@ void StartControlTask(void *argument) {
 		}
 
 		tiempo_prev = tiempo_actual;
+		prev_error_ticks = error_ticks_q16;
 		
     }
 }
@@ -449,7 +432,7 @@ void StartInputHIDTask(void *argument) {
 
     for(;;) {
         // 1. Esperar notificación del USB (Bloqueo eficiente)
-    	 if(xSemaphoreTake(Sem1_HID_RxHandle, portMAX_DELAY) == pdPASS) {
+    	 if(xTaskNotifyWait(0, 0x01, NULL, portMAX_DELAY) == pdPASS) {
 
 			// 2. Obtener el puntero al buffer de recepción
 			hhid = (USBD_CUSTOM_HID_HandleTypeDef*)hUsbDeviceFS.pClassData;
@@ -586,8 +569,8 @@ void StartMonitorTask(void *argument) {
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     if (hi2c->Instance == ENCODER_I2C_INSTANCE) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        // Despertamos a la Sensor_Task para que procese los datos
-        xSemaphoreGiveFromISR(Sem2_DMA_RxHandle, &xHigherPriorityTaskWoken);
+        // Despertar a SensorTask mediante notificación
+        xTaskNotifyFromISR(hSensorTask, 0x02, eSetBits, &xHigherPriorityTaskWoken);
         portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 }

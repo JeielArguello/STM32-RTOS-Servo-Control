@@ -6,8 +6,8 @@
 /* ============= Estructura de Debug del Motor (Control de Posición) ============= */
 
 typedef struct {
-    // Setpoint
-    int32_t setpoint_deg;          // Posición solicitada (en grados)
+    // Setpoint (valor genérico: puede ser grados o RPM según uso)
+    int32_t setpoint;              // Setpoint solicitado (grados o RPM según contexto)
     
     // Mediciones de posición
     int32_t pos_actual;            // Posición actual del encoder (en grados)
@@ -36,9 +36,9 @@ void MotorDebug_Init(void);
 
 /**
  * @brief Inicia el tracking del control de posición
- * @param setpoint_deg: Posición deseada en grados
+ * @param setpoint: Setpoint deseado (por ejemplo, grados o RPM)
  */
-void MotorDebug_Start(int32_t setpoint_deg);
+void MotorDebug_Start(int32_t setpoint);
 
 /**
  * @brief Actualiza las mediciones con los datos actuales del encoder
