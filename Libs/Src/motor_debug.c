@@ -1,8 +1,6 @@
 #include "motor_debug.h"
 #include "FreeRTOS.h"
 #include "task.h"
-#include <stdint.h>
-#include <string.h>
 
 /* ============= Variables Globales ============= */
 
@@ -11,7 +9,7 @@ static MotorDebug_t motor_data = {0};
 /* ============= Funciones Implementadas ============= */
 
 void MotorDebug_Init(void) {
-    memset(&motor_data, 0, sizeof(MotorDebug_t));
+    motor_data.setpoint = 0;
     motor_data.pos_actual = 0;
     motor_data.pos_max_alcanzada = 0;
     motor_data.error_pos_max = 0;
