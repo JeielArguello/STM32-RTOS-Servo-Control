@@ -29,13 +29,17 @@ typedef struct __attribute__((packed)) {
     uint8_t reportID;
     int32_t position;
     int32_t velocity;
+    int16_t rotations;
     uint8_t status_flags;
 } HID_Report_t;
+
+
 
 // Shared motor status structure
 typedef struct {
     int32_t position;
     int32_t velocity;
+    int16_t rotations;
     uint8_t status_flags;
     time_t last_update;
     int updated;
@@ -58,13 +62,20 @@ static void *reader_thread(void *arg)
                 memcpy(&telemetry, report, sizeof(telemetry));
 
                 pthread_mutex_lock(&g_status_mutex);
-                g_motor_status.position = -telemetry.position;
+                g_motor_status.position = telemetry.position;
                 g_motor_status.velocity = telemetry.velocity;
                 g_motor_status.status_flags = telemetry.status_flags;
+                g_motor_status.rotations = telemetry.rotations;
                 g_motor_status.last_update = time(NULL);
                 g_motor_status.updated = 1;
                 pthread_mutex_unlock(&g_status_mutex);
             }
+            else {
+                fprintf(stderr, "Received incomplete report (%d bytes)\n", bytes_read);
+            }
+        }else if (bytes_read < 0) {
+            fprintf(stderr, "Error reading from device: %ls\n", hid_error(handle));
+            g_running = 0;
         }
     }
 
@@ -95,10 +106,13 @@ static void *display_thread(void *arg)
                (long)g_motor_status.position);
         printf("\033[2K");
         printf(ANSI_YELLOW "║ Velocity:    %8ld °/s            ║" ANSI_RESET "\n", 
-               (long)g_motor_status.velocity);
+            (long)g_motor_status.velocity);
+        printf("\033[2K");
+        printf(ANSI_YELLOW "║ Rotations:   %d                    ║" ANSI_RESET "\n", 
+            g_motor_status.rotations);
         printf("\033[2K");
         printf(ANSI_YELLOW "║ Status:      0x%02X                    ║" ANSI_RESET "\n", 
-               g_motor_status.status_flags);
+            g_motor_status.status_flags);
         printf("\033[2K");
         printf(ANSI_YELLOW "║ Updated:     %s          ║" ANSI_RESET "\n",
                g_motor_status.updated ? "YES" : "NO ");
@@ -154,8 +168,8 @@ static int parse_input(const char *line, int32_t *position, int32_t *velocity)
     // Try to parse as position
     char *endptr = NULL;
     long pos = strtol(line, &endptr, 10);
-    if (endptr != line && pos >= -720 && pos <= 720) {
-        *position = (int32_t)-pos;
+    if (endptr != line && pos >= -900 && pos <= 900) {
+        *position = (int32_t)pos;
         return 0;  // Position command
     }
 
@@ -239,7 +253,7 @@ int main(int argc, char **argv)
         // Update targets based on command
         if (cmd_type == 0) {
             // Position command
-            target_position = -pos;
+            target_position = pos;
             printf(ANSI_GREEN "→ Position set to %ld°\n" ANSI_RESET, (long)target_position);
         } else if (cmd_type == 1) {
             // Stop command
@@ -257,6 +271,7 @@ int main(int argc, char **argv)
         report.reportID = 0x02;
         report.position = target_position;
         report.velocity = target_velocity;
+        report.rotations = 0;  
         report.status_flags = 0;
         
         res = hid_write(handle, (unsigned char *)&report, sizeof(report));

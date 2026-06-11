@@ -40,7 +40,9 @@ const char* error_file = NULL;
 
 /* Handles de Colas (Queues) */
 QueueHandle_t Queue1_ComHandle;    // PC -> Control (Consignas)
+QueueHandle_t Queue2_SensorControl; // Sensor -> Control (Datos del sensor)
 QueueHandle_t Queue3_PosHandle;    // Control -> Driver (Pasos/Velocidad)
+QueueHandle_t Queue4_SensorOutputHID; // Sensor -> OutputHID (Datos para HID)
 
 /* Handles de Tareas (para monitoreo) */
 TaskHandle_t hDriverTask;
@@ -53,7 +55,6 @@ TaskHandle_t hMonitorTask;
 /* Handles de Semáforos */
 // Sem1_HID_RxHandle y Sem2_DMA_RxHandle: reemplazados por notificaciones de tareas
 SemaphoreHandle_t Sem3_Mutex_Sensor; // Mutex del sensor
-SemaphoreHandle_t Sem6_SensorReady;  // Semáforo contador para notificar datos frescos
 TimerHandle_t xTimerSensorHandle;
 
 
@@ -73,17 +74,15 @@ void AppInit(void * pvParameters){
 		ERROR_TASK(TASK_APP_INIT);
 	}
 
-	Sem6_SensorReady = xSemaphoreCreateCounting(10, 0);  // Contador de 10 (puede haber hasta 10 datos frescos sin procesar)
-	if(Sem6_SensorReady == NULL) {
-		// Error al crear el semáforo
-		ERROR_TASK(TASK_APP_INIT);
-	}
+	
 
 	// Inicializar librerías de Debug y HID
 	MotorDebug_Init();
 	HID_Manager_Init();
 
 	Queue1_ComHandle = xQueueCreate(2,sizeof(int32_t));    // PC -> Control
+	Queue2_SensorControl = xQueueCreate(5,sizeof(EncoderData_t)); // Sensor -> Control
+	Queue4_SensorOutputHID = xQueueCreate(5,sizeof(EncoderData_t)); // Sensor -> Control
 	Queue3_PosHandle = xQueueCreate(2,sizeof(int32_t));     // Control -> Driver
 
 	if(Queue1_ComHandle  == NULL) {
@@ -91,7 +90,17 @@ void AppInit(void * pvParameters){
 		ERROR_TASK(TASK_APP_INIT);
 	}
 
+	if(Queue2_SensorControl  == NULL) {
+		// Error al crear la Queue
+		ERROR_TASK(TASK_APP_INIT);
+	}
+	
 	if(Queue3_PosHandle  == NULL) {
+		// Error al crear la Queue
+		ERROR_TASK(TASK_APP_INIT);
+	}
+	
+	if(Queue4_SensorOutputHID  == NULL) {
 		// Error al crear la Queue
 		ERROR_TASK(TASK_APP_INIT);
 	}
@@ -211,6 +220,10 @@ void StartSensorTask(void *argument) {
     uint16_t current_raw = 0;
     int32_t diff = 0;
 	int64_t pos_temp = 0;
+	uint16_t sample_raw = 0;
+
+	EncoderData_t sensor_local;
+	BaseType_t xStatus;
 
 	// inicializar sensor
 	// Tomar Mutex para inicializar
@@ -229,10 +242,11 @@ void StartSensorTask(void *argument) {
 		xSemaphoreGive(Sem3_Mutex_Sensor);
 	}
 
+	vTaskDelay(pdMS_TO_TICKS(2000));  // Esperar a que el sistema se estabilice
 	// inicializo timer de software para lectura del sensor
 	xTimerSensorHandle = xTimerCreate(
 	        "TimerSensor",               // Nombre para debug
-	        pdMS_TO_TICKS(2),            // Período: 5ms
+	        pdMS_TO_TICKS(1),            // Período: 5ms
 	        pdTRUE,                      // pdTRUE = Auto-reload (cíclico). pdFALSE = One-shot (se ejecuta una vez)
 	        (void *) 0,                  // ID del timer 
 	        CallbackTimerSensor          // Función que se va a ejecutar
@@ -260,7 +274,7 @@ void StartSensorTask(void *argument) {
 			// 2. Procesar datos crudos fuera del mutex para minimizar latencia
         	current_raw = 0;
 			for(size_t i = 0; i < SENSOR_SAMPLES; i++) {
-				uint16_t sample_raw = ((uint16_t)sensor_data.buffer[i][0] << 8) | sensor_data.buffer[i][1];
+				sample_raw = ((uint16_t)sensor_data.buffer[i][0] << 8) | sensor_data.buffer[i][1];
 				current_raw += sample_raw;
 			}
 			
@@ -277,35 +291,43 @@ void StartSensorTask(void *argument) {
 			if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
 				
 				sensor_data.raw_position = current_raw;
+				sensor_local.raw_position = current_raw;
 				
 				// 1. Calcular el desplazamiento neto en este ciclo (camino más corto)
 				diff = (int32_t)current_raw - (int32_t)prev_raw_position;
 				diff = (diff + 2048) & 4095;
 				diff -= 2048;
-				
-				// 2. ¡EL ESLABÓN PERDIDO! Acumular el delta en la posición global
-				
+					
 				sensor_data.total_ticks += diff; 
+				sensor_local.total_ticks = sensor_data.total_ticks;
+				
 				// 3. Actualizar el historial para el próximo ciclo
 				prev_raw_position = current_raw;
 
 				// 4. Desempaquetar las vueltas netas mediante división entera
 				sensor_data.rotations = (int32_t)(sensor_data.total_ticks / 4096);
-				
+				sensor_local.rotations = sensor_data.rotations;
 				// 5. Calcular ángulo total en grados de forma directa y precisa
 				// Al usar 'current_ticks_global', nos olvidamos de las ecuaciones partidas.
 				// Multiplicamos primero por 360 usando int64_t para evitar overflows.
 				pos_temp = (sensor_data.total_ticks * 360) / 4096;
 				sensor_data.angle_deg = (int32_t)pos_temp;
-
+				sensor_local.angle_deg = sensor_data.angle_deg;
 				// Calcular velocidad en RPM 
 				sensor_data.speed_rpm = motor.current_rpm; 
+				sensor_local.speed_rpm = sensor_data.speed_rpm;
 
 				xSemaphoreGive(Sem3_Mutex_Sensor);
 
-				// 6. Dar el semáforo contador 2 veces (despierta ControlTask y OutputHIDTask)
-				xSemaphoreGive(Sem6_SensorReady);
-				xSemaphoreGive(Sem6_SensorReady);
+				// 6. despierta ControlTask y OutputHIDTask)
+				xStatus = xQueueSendToBack(Queue2_SensorControl, &sensor_local, 0);
+				if(xStatus == pdFAIL){
+					ERROR_TASK(TASK_SENSOR);
+				}
+				xStatus = xQueueSendToBack(Queue4_SensorOutputHID, &sensor_local, 0);
+				if(xStatus == pdFAIL){
+					ERROR_TASK(TASK_SENSOR);
+				}
 			}
         }
     }
@@ -314,7 +336,7 @@ void StartSensorTask(void *argument) {
 
 void StartControlTask(void *argument) {
 
-	EncoderData_t Sensor_local;
+	EncoderData_t sensor_local;
 	int64_t set_point_ticks = 0;  // Setpoint en ticks del sensor
 	BaseType_t xStatus;
 
@@ -331,33 +353,32 @@ void StartControlTask(void *argument) {
 	int64_t current_ticks = 0;
 	int64_t error_ticks_q16 = 0;
 	int64_t prev_error_ticks_q16 = 0;  // Para derivativo
-	TickType_t tiempo_actual = 0, tiempo_prev = xTaskGetTickCount();
-
+	
 	// Revisar si hay nuevo setpoint del usuario
 	int32_t set_point_new = 0;
 
 
 	uint32_t dt_ms = 0;
 	int64_t dt_q16 = 0;
-
+	
 	int64_t p_term = 0;
 	int64_t i_term = 0;
 	int64_t d_term = 0;
-
+	
 	int32_t rpm_target = 0;
 	int64_t rpm_q16 = 0;
-
+	
 	int64_t max_integral = 0;
 	// Esperar a que driver esté activa
 	vTaskDelay(pdMS_TO_TICKS(2000));
+	TickType_t tiempo_actual = 0, tiempo_prev = xTaskGetTickCount();
+
     for(;;){
-    	// Esperar a que el SensorTask publique datos frescos
-    	xSemaphoreTake(Sem6_SensorReady, portMAX_DELAY);
 
 		// Tomar el mutex y leer la estructura global del sensor
-		if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
-			Sensor_local = sensor_data;
-			xSemaphoreGive(Sem3_Mutex_Sensor);
+		xStatus = xQueueReceive(Queue2_SensorControl, &sensor_local, portMAX_DELAY);
+		if(xStatus == pdFAIL) {
+			ERROR_TASK(TASK_CONTROL);
 		}
 
 		xStatus = xQueueReceive(Queue1_ComHandle, &set_point_new, 0);
@@ -372,14 +393,12 @@ void StartControlTask(void *argument) {
 		tiempo_actual = xTaskGetTickCount();
 		dt_ms = (tiempo_actual - tiempo_prev) * portTICK_PERIOD_MS;
 		
-
 		// Calcular posición actual en ticks (multivuelta)
 		// Hacer casts por separado para evitar promociones/overflow en enteros
-		current_ticks =  Sensor_local.total_ticks;
+		current_ticks =  sensor_local.total_ticks;
 
 		// Error de posición: debe ser negativo cuando está atrás (para girar atrás)
 		error_ticks =  set_point_ticks - current_ticks;
-
 
 		error_ticks_q16 = Q16_FROM_INT(error_ticks);
 		// P: proporcional al error
@@ -423,13 +442,13 @@ void StartControlTask(void *argument) {
 		if(rpm_target > 225) rpm_target = 225;
 		if(rpm_target < -225) rpm_target = -225;
 
-		rpm_output_prev = rpm_target;  // Guardar para siguiente ciclo
-
+		
 		// ===== ENVIAR RPM AL DRIVER =====
 		if(xQueueSendToBack(Queue3_PosHandle, &rpm_target, 0) == pdFAIL){
 			ERROR_TASK(TASK_CONTROL);
 		}
-
+		
+		rpm_output_prev = rpm_target;  // Guardar para siguiente ciclo
 		tiempo_prev = tiempo_actual;
 		prev_error_ticks_q16 = error_ticks_q16;
 		
@@ -441,9 +460,11 @@ void StartInputHIDTask(void *argument) {
 
 
     HID_Report_t incoming_report;
-    int32_t new_setpoint_ticks;
-    int32_t new_setpoint_deg;
+    int32_t new_setpoint_ticks = 0;
+    int32_t new_setpoint_deg = 0;
     USBD_CUSTOM_HID_HandleTypeDef *hhid;
+	int64_t new_setpoint_q16 = 0;
+	int64_t new_setpoint_ticks_q16 = 0;
 
     for(;;) {
         // 1. Esperar notificación del USB (Bloqueo eficiente)
@@ -463,10 +484,10 @@ void StartInputHIDTask(void *argument) {
 				new_setpoint_deg = -incoming_report.position;  // Posición en grados
 
 				// Convertir grados en grados q16
-				int64_t new_setpoint_q16 = Q16_FROM_INT(new_setpoint_deg);
+				new_setpoint_q16 = Q16_FROM_INT(new_setpoint_deg);
 
 				// Convertir grados a ticks en q16 (1 vuelta = 360 grados = 4096 ticks)
-				int64_t new_setpoint_ticks_q16 = Q16_DIV(Q16_MUL(new_setpoint_q16, Q16_FROM_INT(4096)), Q16_FROM_INT(360));
+				new_setpoint_ticks_q16 = Q16_DIV(Q16_MUL(new_setpoint_q16, Q16_FROM_INT(4096)), Q16_FROM_INT(360));
 
 				new_setpoint_ticks = Q16_TO_INT(new_setpoint_ticks_q16);
 				// 5. Enviar el nuevo Setpoint en ticks a ControlTask via Queue1
@@ -482,20 +503,18 @@ void StartInputHIDTask(void *argument) {
 void StartOutputHIDTask(void *argument) {
     // 1. Variable local para recibir la COPIA de los datos del sensor
     EncoderData_t sensor_local;
+	BaseType_t xStatus;
 
     for(;;) {
         // 1. Esperar a que el SensorTask publique datos frescos
-        xSemaphoreTake(Sem6_SensorReady, portMAX_DELAY);
-
-        // 2. Tomar el mutex y leer la estructura global del sensor
-        if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
-            sensor_local = sensor_data;
-            xSemaphoreGive(Sem3_Mutex_Sensor);
-        }
+        xStatus = xQueueReceive(Queue4_SensorOutputHID, &sensor_local, portMAX_DELAY);
+		if(xStatus == pdFAIL) {
+			ERROR_TASK(TASK_OUTPUT_HID);
+		}
 
         // 3. Actualizar datos HID con info del sensor
         uint8_t status = HID_Manager_GetStatus();
-        HID_Manager_Update(sensor_local.angle_deg, sensor_local.speed_rpm, status);
+        HID_Manager_Update(&sensor_local, status);
 
 		// 4. Enviar reporte HID
 		if(HID_Manager_SendReport() != HAL_OK) {
@@ -570,7 +589,7 @@ void StartMonitorTask(void *argument) {
         }
 
         // 5. Alerta crítica: disparar error
-        if(debug_stats.memory_warning == 2) {
+        if(debug_stats.memory_warning == 3) {
             ERROR_TASK(TASK_MONITOR);
         }
 

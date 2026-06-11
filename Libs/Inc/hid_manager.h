@@ -5,6 +5,7 @@
 #include "stm32f1xx_hal.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "Encoder_types.h"
 
 /* ============= Estructuras HID ============= */
 
@@ -12,6 +13,7 @@ typedef struct __attribute__((packed)) {
     uint8_t reportID;     // ID del reporte HID
     int32_t position;     // Posición actual del motor
     int32_t velocity;    // Velocidad calculada
+    int16_t rotations;    // Número de vueltas
     uint8_t status_flags; // Errores, límites, etc.
 } HID_Report_t;
 
@@ -33,12 +35,11 @@ void HID_Manager_Init(void);
 
 /**
  * @brief Actualiza los datos HID con nueva información
- * @param position: Nueva posición del motor
- * @param velocity: Nueva velocidad
+ * @param encoder_data: Estructura con datos del encoder
  * @param status: Flags de estado
  * @note Función thread-safe usando mutex
  */
-void HID_Manager_Update(int32_t position, int32_t velocity, uint8_t status);
+void HID_Manager_Update(EncoderData_t *sensor_data, uint8_t status);
 
 /**
  * @brief Envía el reporte HID actual al host

@@ -29,20 +29,22 @@ void HID_Manager_Init(void) {
     hid_report_buffer.reportID = 0x01;
     hid_report_buffer.position = 0;
     hid_report_buffer.velocity = 0;
+    hid_report_buffer.rotations = 0;
     hid_report_buffer.status_flags = HID_STATUS_OK;
     
     hid_initialized = 1;
 }
 
-void HID_Manager_Update(int32_t position, int32_t velocity, uint8_t status) {
+void HID_Manager_Update(EncoderData_t *sensor_data, uint8_t status) {
     if (hid_mutex == NULL) {
         return;
     }
     
     if (xSemaphoreTake(hid_mutex, portMAX_DELAY) == pdPASS) {
         hid_report_buffer.reportID = 0x01;
-        hid_report_buffer.position = position;
-        hid_report_buffer.velocity = velocity;
+        hid_report_buffer.position = sensor_data->angle_deg;
+        hid_report_buffer.velocity = sensor_data->speed_rpm;
+        hid_report_buffer.rotations = sensor_data->rotations;
         hid_report_buffer.status_flags = status;
         xSemaphoreGive(hid_mutex);
     }
@@ -124,6 +126,7 @@ void HID_Manager_Reset(void) {
         hid_report_buffer.reportID = 0x01;
         hid_report_buffer.position = 0;
         hid_report_buffer.velocity = 0;
+        hid_report_buffer.rotations = 0;
         hid_report_buffer.status_flags = HID_STATUS_OK;
         xSemaphoreGive(hid_mutex);
     }
