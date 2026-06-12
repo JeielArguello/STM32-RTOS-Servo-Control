@@ -105,15 +105,26 @@ void AppInit(void * pvParameters){
 		ERROR_TASK(TASK_APP_INIT);
 	}
 
-	// Escáner rápido de I2C para el AS5600
-	HAL_StatusTypeDef resultado;
-
-	// Enviamos un ping de prueba para ver si el chip responde en el bus
-	resultado = HAL_I2C_IsDeviceReady(&ENCODER_I2C_HANDLE, AS5600_ADDR, 3, 100);
-
-	if (resultado != HAL_OK) {
-		ERROR_TASK(TASK_APP_INIT);
+	uint8_t codigo_error = Diagnosticar_AS5600(&ENCODER_I2C_HANDLE, &sensor_data);
+			
+	if (codigo_error != ENCODER_OK) {
+		
+		// CASO CATASTRÓFICO 1: Se cortó el cable o se tildó el bus I2C
+		if (codigo_error & ENCODER_ERR_I2C) {
+			ERROR_TASK(TASK_APP_INIT);
+		}
+		
+		// CASO CATASTRÓFICO 2: El imán salió volando mecánicamente
+		if (codigo_error & ENCODER_ERR_NO_MAG) {
+			ERROR_TASK(TASK_APP_INIT);
+		}
+		
+		// CASOS ADVERTENCIA: El imán está descentrado, mal posicionado o zofra (causa saltos)
+		if ((codigo_error & ENCODER_ERR_MAG_LOW) || (codigo_error & ENCODER_ERR_MAG_HIGH)) {
+			ERROR_TASK(TASK_APP_INIT); 
+		}
 	}
+
 
 	MX_USB_DEVICE_Init();
 
@@ -216,37 +227,34 @@ void StartDriverTask(void *argument) {
 
 void StartSensorTask(void *argument) {
     uint16_t prev_raw_position = 0;
-    int32_t last_degrees = 0;
     uint16_t current_raw = 0;
     int32_t diff = 0;
-	int64_t pos_temp = 0;
-	uint16_t sample_raw = 0;
+    int64_t pos_temp = 0;
+    
+    // El filtro necesita mantener su estado en el tiempo
+    int32_t posicion_absoluta_filtrada = 0; 
+    uint8_t primer_ciclo = 1;
 
-	EncoderData_t sensor_local;
-	BaseType_t xStatus;
+    EncoderData_t sensor_local;
+    BaseType_t xStatus;
 
 	// inicializar sensor
 	// Tomar Mutex para inicializar
 	if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
-		sensor_data.raw_position = 0;
-		sensor_data.rotations = 0;
-		sensor_data.angle_deg = 0;  // Ángulo inicial en grados
-		sensor_data.status = 0;
-		sensor_data.index= 0;
-		sensor_data.speed_rpm = 0;
-		sensor_data.total_ticks = 0;
-		for(size_t i = 0; i < SENSOR_SAMPLES; i++) {
-			sensor_data.buffer[i][0] = 0;
-			sensor_data.buffer[i][1] = 0;
-		}
-		xSemaphoreGive(Sem3_Mutex_Sensor);
-	}
+        sensor_data.raw_position = 0;
+        sensor_data.rotations = 0;
+        sensor_data.angle_deg = 0;
+        sensor_data.status = 0;
+        sensor_data.speed_rpm = 0;
+        sensor_data.total_ticks = 0;
+        xSemaphoreGive(Sem3_Mutex_Sensor);
+    }
 
 	vTaskDelay(pdMS_TO_TICKS(2000));  // Esperar a que el sistema se estabilice
 	// inicializo timer de software para lectura del sensor
 	xTimerSensorHandle = xTimerCreate(
 	        "TimerSensor",               // Nombre para debug
-	        pdMS_TO_TICKS(1),            // Período: 5ms
+	        pdMS_TO_TICKS(3),            // Período: 5ms
 	        pdTRUE,                      // pdTRUE = Auto-reload (cíclico). pdFALSE = One-shot (se ejecuta una vez)
 	        (void *) 0,                  // ID del timer 
 	        CallbackTimerSensor          // Función que se va a ejecutar
@@ -266,68 +274,68 @@ void StartSensorTask(void *argument) {
         // 1. Esperar al DMA (Sincronizado con TIM) usando notificación
         if(xTaskNotifyWait(0, 0x02, NULL, portMAX_DELAY) == pdPASS) {
 
-            
-			sensor_data.index = (sensor_data.index + 1) % SENSOR_SAMPLES;
-			if(sensor_data.index + 1 < SENSOR_SAMPLES) {
-				continue;
-			}
-			// 2. Procesar datos crudos fuera del mutex para minimizar latencia
-        	current_raw = 0;
-			for(size_t i = 0; i < SENSOR_SAMPLES; i++) {
-				sample_raw = ((uint16_t)sensor_data.buffer[i][0] << 8) | sensor_data.buffer[i][1];
-				current_raw += sample_raw;
-			}
-			
-			current_raw /= SENSOR_SAMPLES;  // Promediar muestras para reducir ruido
-			
-            // Validar que el raw está en rango correcto (0-4095 para AS5600)
-            if(current_raw > 4095) {
-                continue;  // Dato corrupto, ignorar
+            // 2. Procesar el dato crudo actual de 12 bits 
+            // ASUMO: sensor_data.buffer ahora es simplemente un array de 2 bytes donde la DMA escupe la lectura actual
+            current_raw = ((uint16_t)sensor_data.buffer[0] << 8) | sensor_data.buffer[1];
+            current_raw &= 0x0FFF; // Máscara de 12 bits (0-4095) por seguridad
+
+            if (primer_ciclo) {
+                prev_raw_position = current_raw;
+				if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
+					// CRÍTICO: total_ticks NO puede arrancar en 0. 
+					// Tiene que arrancar en la posición real del motor.
+					sensor_data.total_ticks = (int32_t)current_raw; // total_ticks = 4051
+					xSemaphoreGive(Sem3_Mutex_Sensor);
+				}
+                posicion_absoluta_filtrada = current_raw; // Inicializar filtro
+                primer_ciclo = 0;
             }
 
+            // 3. CALCULAR DESPLAZAMIENTO NETO (Unwrapping sobre el valor real, sin promediar)
+            diff = (int32_t)current_raw - (int32_t)prev_raw_position;
+            diff = (diff + 2048) & 4095;
+            diff -= 2048;
             
-			
-			// 3. Tomar Mutex para actualizar la estructura global
-			if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
-				
-				sensor_data.raw_position = current_raw;
-				sensor_local.raw_position = current_raw;
-				
-				// 1. Calcular el desplazamiento neto en este ciclo (camino más corto)
-				diff = (int32_t)current_raw - (int32_t)prev_raw_position;
-				diff = (diff + 2048) & 4095;
-				diff -= 2048;
-					
-				sensor_data.total_ticks += diff; 
-				sensor_local.total_ticks = sensor_data.total_ticks;
-				
-				// 3. Actualizar el historial para el próximo ciclo
-				prev_raw_position = current_raw;
+            prev_raw_position = current_raw; // Guardar para el próximo ms
 
-				// 4. Desempaquetar las vueltas netas mediante división entera
-				sensor_data.rotations = (int32_t)(sensor_data.total_ticks / 4096);
-				sensor_local.rotations = sensor_data.rotations;
-				// 5. Calcular ángulo total en grados de forma directa y precisa
-				// Al usar 'current_ticks_global', nos olvidamos de las ecuaciones partidas.
-				// Multiplicamos primero por 360 usando int64_t para evitar overflows.
-				pos_temp = (sensor_data.total_ticks * 360) / 4096;
-				sensor_data.angle_deg = (int32_t)pos_temp;
-				sensor_local.angle_deg = sensor_data.angle_deg;
-				// Calcular velocidad en RPM 
-				sensor_data.speed_rpm = motor.current_rpm; 
-				sensor_local.speed_rpm = sensor_data.speed_rpm;
+            // 4. Tomar Mutex para actualizar los datos globales de control
+            if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
+                
+                // Acumular la posición real sin ruido de promedios lineales
+                sensor_data.total_ticks += diff; 
 
-				xSemaphoreGive(Sem3_Mutex_Sensor);
+                // 5. FILTRO EXPONENCIAL (EMA) sobre la posición absoluta de 32 bits
+                // Equivale a un promedio suave de las últimas ~8 muestras, pero sin romper el cero.
+                posicion_absoluta_filtrada = ((posicion_absoluta_filtrada * 7) + sensor_data.total_ticks) >> 3;
 
-				// 6. despierta ControlTask y OutputHIDTask)
-				xStatus = xQueueSendToBack(Queue2_SensorControl, &sensor_local, 0);
-				if(xStatus == pdFAIL){
-					ERROR_TASK(TASK_SENSOR);
-				}
-				xStatus = xQueueSendToBack(Queue4_SensorOutputHID, &sensor_local, 0);
-				if(xStatus == pdFAIL){
-					ERROR_TASK(TASK_SENSOR);
-				}
+                // Guardamos los valores filtrados en la estructura local y global
+                sensor_local.total_ticks = posicion_absoluta_filtrada;
+                //sensor_data.total_ticks_filtrados = posicion_absoluta_filtrada; // Opcional, si querés trackear el filtrado separado
+
+                sensor_data.raw_position = current_raw;
+                sensor_local.raw_position = current_raw;
+
+                // Calcular vueltas basado en la posición filtrada
+                sensor_data.rotations = (int32_t)(posicion_absoluta_filtrada / 4096);
+                sensor_local.rotations = sensor_data.rotations;
+
+                // Calcular ángulo en grados de forma directa sobre el valor filtrado
+                pos_temp = ((int64_t)posicion_absoluta_filtrada * 360) / 4096;
+                sensor_data.angle_deg = (int32_t)pos_temp;
+                sensor_local.angle_deg = sensor_data.angle_deg;
+
+                // Velocidad
+                sensor_data.speed_rpm = motor.current_rpm; 
+                sensor_local.speed_rpm = sensor_data.speed_rpm;
+
+                xSemaphoreGive(Sem3_Mutex_Sensor);
+
+                // 6. Despertar a ControlTask y OutputHIDTask con datos limpios cada 1ms
+                xStatus = xQueueSendToBack(Queue2_SensorControl, &sensor_local, 0);
+                if(xStatus == pdFAIL) { ERROR_TASK(TASK_SENSOR); }
+                
+                xStatus = xQueueSendToBack(Queue4_SensorOutputHID, &sensor_local, 0);
+                if(xStatus == pdFAIL) { ERROR_TASK(TASK_SENSOR); }
 			}
         }
     }
@@ -341,9 +349,9 @@ void StartControlTask(void *argument) {
 	BaseType_t xStatus;
 
 	// GANANCIAS DEL PID EN Q16
-	int64_t Kp_q16 = 12000;  // Proporcional: 0.017 RPM/tick
-	int64_t Ki_q16 = 200;      // Integral: 0.000046 RPM/(tick·seg)
-	int64_t Kd_q16 = 70;       // Derivativo: 0 (no se usa)
+	int64_t Kp_q16 = 42000;  // Proporcional: 0.017 RPM/tick
+	int64_t Ki_q16 = -45;      // Integral: 0.000046 RPM/(tick·seg)
+	int64_t Kd_q16 = 220;       // Derivativo: 0 (no se usa)
 	
 	int64_t error_ticks = 0;
 	int64_t integral_error = 0;
@@ -617,7 +625,7 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
 /* Función que se ejecuta cada vez que el timer vence */
 void CallbackTimerSensor(TimerHandle_t xTimer){
 
-	HAL_StatusTypeDef DMAStatus = HAL_I2C_Mem_Read_DMA(&ENCODER_I2C_HANDLE,AS5600_ADDR, ANGLE_REG_MSB, I2C_MEMADD_SIZE_8BIT, sensor_data.buffer[sensor_data.index], 2);
+	HAL_StatusTypeDef DMAStatus = HAL_I2C_Mem_Read_DMA(&ENCODER_I2C_HANDLE,AS5600_ADDR, ANGLE_REG_MSB, I2C_MEMADD_SIZE_8BIT, sensor_data.buffer, 2);
 	// Si el bus está trabado (BUSY), reiniciamos el periférico
 	if ( DMAStatus != HAL_OK) {
 		__HAL_I2C_DISABLE(&ENCODER_I2C_HANDLE);

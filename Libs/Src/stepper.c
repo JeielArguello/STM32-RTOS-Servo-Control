@@ -43,6 +43,16 @@ void Stepper_SetMicrostepping(Stepper_Handler* hmotor, Stepper_Mode mode) {
 			HAL_GPIO_WritePin(hmotor->m1.port, hmotor->m1.pin, 0);
 			HAL_GPIO_WritePin(hmotor->m2.port, hmotor->m2.pin, 0);
 			break;
+        case STEP_QUARTER:
+            HAL_GPIO_WritePin(hmotor->m0.port, hmotor->m0.pin, 0);
+            HAL_GPIO_WritePin(hmotor->m1.port, hmotor->m1.pin, 1);
+            HAL_GPIO_WritePin(hmotor->m2.port, hmotor->m2.pin, 0);
+            break;
+        case STEP_EIGHTH:
+            HAL_GPIO_WritePin(hmotor->m0.port, hmotor->m0.pin, 1);
+            HAL_GPIO_WritePin(hmotor->m1.port, hmotor->m1.pin, 1);
+            HAL_GPIO_WritePin(hmotor->m2.port, hmotor->m2.pin, 0);
+            break;
         case STEP_SIXTEENTH:
             HAL_GPIO_WritePin(hmotor->m0.port, hmotor->m0.pin, 0);
             HAL_GPIO_WritePin(hmotor->m1.port, hmotor->m1.pin, 0);
@@ -53,7 +63,6 @@ void Stepper_SetMicrostepping(Stepper_Handler* hmotor, Stepper_Mode mode) {
             HAL_GPIO_WritePin(hmotor->m1.port, hmotor->m1.pin, 1);
             HAL_GPIO_WritePin(hmotor->m2.port, hmotor->m2.pin, 1);
             break;
-        // ... Agregar los casos restantes según el datasheet del DRV8825
         default: break;
     }
 }

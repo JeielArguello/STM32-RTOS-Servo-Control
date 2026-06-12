@@ -126,7 +126,7 @@ static void *display_thread(void *arg)
         fflush(stdout);
         
         // Update every 200ms for smooth real-time display
-        usleep(200000);
+        usleep(20000);
     }
 
     return NULL;
