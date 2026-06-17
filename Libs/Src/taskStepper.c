@@ -8,25 +8,14 @@
 #include "taskStepper.h"
 #include "usb_device.h"
 #include "usbd_custom_hid_if.h"
+#include "hid_manager.h"
+#include "pid.h"
 #include "tim_debug.h"
 #include "motor_debug.h"
-#include "hid_manager.h"
 #include "debugstats.h"
 
 // Macro para convertir microsegundos a ticks de FreeRTOS
 #define pdUS_TO_TICKS(us) ((TickType_t)(((uint64_t)(us) * configTICK_RATE_HZ) / 1000000UL))
-// ============ FIXED-POINT Q16 (para PID sin floats) ============
-// Q16: 16 bits decimales, 16 bits enteros
-// 1.0 = 65536 (0x10000)
-// 0.5 = 32768
-// 0.001 = 65 (aprox)
-#define Q16_SHIFT 16
-#define Q16_ONE (1LL << Q16_SHIFT)     // 1.0 en Q16
-#define Q16_FROM_INT(x) ((int64_t)(x) * Q16_ONE)
-#define Q16_TO_INT(x) ((int32_t)((int64_t)(x) / Q16_ONE))
-#define Q16_MUL(a, b) ((int64_t)(((int64_t)(a) * (int64_t)(b)) / Q16_ONE))
-#define Q16_DIV(a, b) ((int64_t)(((int64_t)(a) * Q16_ONE) / (int64_t)(b)))
-
 
 DebugStats_t debug_stats = {0};
 EncoderData_t sensor_data = {0};
@@ -58,10 +47,11 @@ SemaphoreHandle_t Sem3_Mutex_Sensor; // Mutex del sensor
 TimerHandle_t xTimerSensorHandle;
 
 
+uint32_t get_tick_ms(void){
+	return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+}
+
 /* --------------------------- Tareas ------------------------------------------------*/
-
-
-
 
 void AppInit(void * pvParameters){
 
@@ -129,7 +119,7 @@ void AppInit(void * pvParameters){
 	MX_USB_DEVICE_Init();
 
 	BaseType_t status;
-	status = xTaskCreate(StartDriverTask, "DriverTask", 256, NULL, 4, &hDriverTask);
+	status = xTaskCreate(StartDriverTask, "DriverTask", 256, NULL, 7, &hDriverTask);
 	if( status != pdPASS){
 	ERROR_TASK(TASK_APP_INIT);
 	}
@@ -139,24 +129,24 @@ void AppInit(void * pvParameters){
 	ERROR_TASK(TASK_APP_INIT);
 	}
 
-	status = xTaskCreate(StartControlTask, "ControlTask", 512, NULL, 3, &hControlTask);
+	status = xTaskCreate(StartControlTask, "ControlTask", 512, NULL, 6, &hControlTask);
 	if( status != pdPASS){
 	  ERROR_TASK(TASK_APP_INIT);
 	}
 
 
-	status = xTaskCreate(StartInputHIDTask, "InputHIDTask", 256, NULL, 4, &hInputHIDTask);
+	status = xTaskCreate(StartInputHIDTask, "InputHIDTask", 256, NULL, 3, &hInputHIDTask);
 	if( status != pdPASS){
 	  ERROR_TASK(TASK_APP_INIT);
 	}
 
 
-	status = xTaskCreate(StartOutputHIDTask, "OutputHIDTask", 256, NULL, 3, &hOutputHIDTask);
+	status = xTaskCreate(StartOutputHIDTask, "OutputHIDTask", 256, NULL, 2, &hOutputHIDTask);
 	if( status != pdPASS){
 	  ERROR_TASK(TASK_APP_INIT);
 	}
 
-	status = xTaskCreate(StartMonitorTask, "MonitorTask", 128, NULL, 2, &hMonitorTask);
+	status = xTaskCreate(StartMonitorTask, "MonitorTask", 128, NULL, 1 , &hMonitorTask);
 	if( status != pdPASS){
 	  ERROR_TASK(TASK_APP_INIT);
 	}
@@ -254,7 +244,7 @@ void StartSensorTask(void *argument) {
 	// inicializo timer de software para lectura del sensor
 	xTimerSensorHandle = xTimerCreate(
 	        "TimerSensor",               // Nombre para debug
-	        pdMS_TO_TICKS(3),            // Período: 5ms
+	        pdMS_TO_TICKS(3),            // Período: 3ms
 	        pdTRUE,                      // pdTRUE = Auto-reload (cíclico). pdFALSE = One-shot (se ejecuta una vez)
 	        (void *) 0,                  // ID del timer 
 	        CallbackTimerSensor          // Función que se va a ejecutar
@@ -275,7 +265,7 @@ void StartSensorTask(void *argument) {
         if(xTaskNotifyWait(0, 0x02, NULL, portMAX_DELAY) == pdPASS) {
 
             // 2. Procesar el dato crudo actual de 12 bits 
-            // ASUMO: sensor_data.buffer ahora es simplemente un array de 2 bytes donde la DMA escupe la lectura actual
+            
             current_raw = ((uint16_t)sensor_data.buffer[0] << 8) | sensor_data.buffer[1];
             current_raw &= 0x0FFF; // Máscara de 12 bits (0-4095) por seguridad
 
@@ -284,7 +274,7 @@ void StartSensorTask(void *argument) {
 				if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
 					// CRÍTICO: total_ticks NO puede arrancar en 0. 
 					// Tiene que arrancar en la posición real del motor.
-					sensor_data.total_ticks = (int32_t)current_raw; // total_ticks = 4051
+					sensor_data.total_ticks = (int32_t)current_raw; 
 					xSemaphoreGive(Sem3_Mutex_Sensor);
 				}
                 posicion_absoluta_filtrada = current_raw; // Inicializar filtro
@@ -301,7 +291,7 @@ void StartSensorTask(void *argument) {
             // 4. Tomar Mutex para actualizar los datos globales de control
             if(xSemaphoreTake(Sem3_Mutex_Sensor, portMAX_DELAY) == pdPASS) {
                 
-                // Acumular la posición real sin ruido de promedios lineales
+                // Acumular la posición real 
                 sensor_data.total_ticks += diff; 
 
                 // 5. FILTRO EXPONENCIAL (EMA) sobre la posición absoluta de 32 bits
@@ -319,8 +309,13 @@ void StartSensorTask(void *argument) {
                 sensor_data.rotations = (int32_t)(posicion_absoluta_filtrada / 4096);
                 sensor_local.rotations = sensor_data.rotations;
 
-                // Calcular ángulo en grados de forma directa sobre el valor filtrado
-                pos_temp = ((int64_t)posicion_absoluta_filtrada * 360) / 4096;
+				// Redondeo simétrico: sumamos medio divisor antes de dividir
+				int64_t numerador = (int64_t)posicion_absoluta_filtrada * 360;
+				if (numerador >= 0) {
+					pos_temp = (numerador + 2048) / 4096;  // +0.5 * 4096
+				} else {
+					pos_temp = (numerador - 2048) / 4096;
+				}
                 sensor_data.angle_deg = (int32_t)pos_temp;
                 sensor_local.angle_deg = sensor_data.angle_deg;
 
@@ -347,39 +342,25 @@ void StartControlTask(void *argument) {
 	EncoderData_t sensor_local;
 	int64_t set_point_ticks = 0;  // Setpoint en ticks del sensor
 	BaseType_t xStatus;
-
+	PIDController pid;
+	
 	// GANANCIAS DEL PID EN Q16
-	int64_t Kp_q16 = 42000;  // Proporcional: 0.017 RPM/tick
-	int64_t Ki_q16 = -45;      // Integral: 0.000046 RPM/(tick·seg)
-	int64_t Kd_q16 = 220;       // Derivativo: 0 (no se usa)
+	//int64_t A = Q16_DIV(255,4095);
+	int64_t Kp_q16 = 46200;  // Proporcional: 
+	int64_t Ki_q16 = 0;      // Integral: 
+	int64_t Kd_q16 = 300;       // Derivativo: 
 	
 	int64_t error_ticks = 0;
-	int64_t integral_error = 0;
-	int64_t derivative_q16 = 0;
-	int32_t rpm_output_prev = 0;  // RPM anterior para limitar rampa
+	
+	int32_t rpm_target = 0;  
 
 	int64_t current_ticks = 0;
-	int64_t error_ticks_q16 = 0;
-	int64_t prev_error_ticks_q16 = 0;  // Para derivativo
-	
 	// Revisar si hay nuevo setpoint del usuario
 	int32_t set_point_new = 0;
-
-
-	uint32_t dt_ms = 0;
-	int64_t dt_q16 = 0;
-	
-	int64_t p_term = 0;
-	int64_t i_term = 0;
-	int64_t d_term = 0;
-	
-	int32_t rpm_target = 0;
-	int64_t rpm_q16 = 0;
-	
-	int64_t max_integral = 0;
 	// Esperar a que driver esté activa
 	vTaskDelay(pdMS_TO_TICKS(2000));
-	TickType_t tiempo_actual = 0, tiempo_prev = xTaskGetTickCount();
+
+	PIDController_Init(&pid, Kp_q16, Ki_q16, Kd_q16, 0, 225, 0, get_tick_ms); // Ramp=0 (deshabilitada), Limit=450 RPM, Ts=0 (calculado dinámicamente), función de tiempo personalizada
 
     for(;;){
 
@@ -392,73 +373,30 @@ void StartControlTask(void *argument) {
 		xStatus = xQueueReceive(Queue1_ComHandle, &set_point_new, 0);
 		if(xStatus == pdPASS) {
 			set_point_ticks = (int64_t)set_point_new;
-			integral_error = 0;  // Resetear integral al cambiar setpoint
-			error_ticks = 0;
-			prev_error_ticks_q16 = 0;
+			// Reiniciar PID con el nuevo setpoint para evitar overshoot
+			PIDController_Reset(&pid);
 		}
-
-		// Calcular tiempo transcurrido
-		tiempo_actual = xTaskGetTickCount();
-		dt_ms = (tiempo_actual - tiempo_prev) * portTICK_PERIOD_MS;
+		int64_t DEADBAND_TICKS = 5; // Zona muerta de 10 ticks (ajustable según la resolución y el comportamiento deseado)
 		
 		// Calcular posición actual en ticks (multivuelta)
-		// Hacer casts por separado para evitar promociones/overflow en enteros
 		current_ticks =  sensor_local.total_ticks;
 
-		// Error de posición: debe ser negativo cuando está atrás (para girar atrás)
+		// Error de posición
 		error_ticks =  set_point_ticks - current_ticks;
 
-		error_ticks_q16 = Q16_FROM_INT(error_ticks);
-		// P: proporcional al error
-		p_term = Q16_MUL(Kp_q16, error_ticks_q16);
-
-		// I: integral del error (CON ANTI-WINDUP MÁS FUERTE)
-		if(error_ticks < 4096 && error_ticks > -4096) {  // Solo integrar si el error es significativo
-			dt_q16 = Q16_DIV(dt_ms, 1000);  // dt en segundos, Q16
-			integral_error += Q16_MUL(Ki_q16, Q16_MUL(error_ticks_q16, dt_q16));
-			
-			// Anti-windup MÁS AGRESIVO: limitar a ±300 
-			max_integral = Q16_FROM_INT(225);
-			if(integral_error > max_integral) integral_error = max_integral;
-			if(integral_error < -max_integral) integral_error = -max_integral;
-		} else{
-			integral_error = 0;  
+		if (abs(error_ticks) <= DEADBAND_TICKS) {
+			// Dentro de la zona muerta: no hay movimiento posible que mejore la posición
+			rpm_target = 0;
+			PIDController_Reset(&pid);  // anti-windup, aunque en tu caso Ki=0 esto es preventivo
+		} else {
+			// Fuera de la zona muerta: PID normal
+			rpm_target = PIDController_Update(&pid, error_ticks);
 		}
-		
-		i_term = integral_error;
-
-
-		// D: derivador
-
-		if (dt_ms > 0){
-			derivative_q16 = Q16_DIV((error_ticks_q16 - prev_error_ticks_q16), dt_q16);
-            d_term = Q16_MUL(Kd_q16, derivative_q16);
-		}else{
-            d_term = 0;
-		}
-		// RPM = P + I + D
-		rpm_q16 = p_term + i_term + d_term;
-
-			
-		rpm_target = Q16_TO_INT(rpm_q16);
-	
-
-		// ===== LIMITAR TASA DE CAMBIO DE RPM (rampa en control) =====
-		
-
-		// Limitar RPM final (driver manejará frenar si RPM < 5)
-		if(rpm_target > 225) rpm_target = 225;
-		if(rpm_target < -225) rpm_target = -225;
-
-		
 		// ===== ENVIAR RPM AL DRIVER =====
 		if(xQueueSendToBack(Queue3_PosHandle, &rpm_target, 0) == pdFAIL){
 			ERROR_TASK(TASK_CONTROL);
 		}
 		
-		rpm_output_prev = rpm_target;  // Guardar para siguiente ciclo
-		tiempo_prev = tiempo_actual;
-		prev_error_ticks_q16 = error_ticks_q16;
 		
     }
 }
