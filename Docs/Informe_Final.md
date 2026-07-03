@@ -73,7 +73,9 @@ El firmware se estructura en seis tareas FreeRTOS interconectadas por colas, un 
 
 El evento de adquisición del sensor está gobernado por un software timer de FreeRTOS configurado a un período de 3 ms. Al vencer dicho timer, se inicia la transferencia DMA del bus I2C hacia el AS5600. La interrupción de "DMA Transfer Complete" notifica a Sensor_Task (vía xTaskNotifyFromISR), momento en el cual la CPU retoma el dato ya disponible en RAM sin haber estado bloqueada durante la transferencia. Las interrupciones del endpoint USB (recepción de OUT report) notifican de forma análoga a Input_HID_Task.
 
-![Diagrama de tareas e IPC](img/diagrama_de_tareas.png)
+<object data="img/diagrama_de_tareas.pdf" type="application/pdf" width="100%" height="600px">
+    <p>Puede abrir o descargar el archivo para ver el diagrama de tareas:  <a href="img/diagrama_de_tareas.pdf">diagrama_de_tareas.pdf</a>.</p>
+</object>
 
 ---
 
