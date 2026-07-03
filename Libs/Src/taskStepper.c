@@ -166,14 +166,14 @@ void StartDriverTask(void *argument) {
 	motor.m1 = (Stepper_Pin){GPIO_M1_GPIO_Port, GPIO_M1_Pin};
 	motor.m2 = (Stepper_Pin){GPIO_M2_GPIO_Port, GPIO_M2_Pin};
 	Stepper_Init(&motor);
-	Stepper_SetMicrostepping(&motor, STEP_HALF); // 200 pasos por vuelta
+	Stepper_SetMicrostepping(&motor, STEP_HALF); // 200 * 2(STEP_HALF) = 400 pasos por vuelta
 
 	BaseType_t xStatus;
 	int32_t rpm_from_control;
 
 	// ===== PRUEBA INICIAL: Una vuelta =====
 	MotorDebug_Start(360);  // 1 vuelta = 360 grados
-	Stepper_SetSteps(&motor, 360);  // 360 Hz = 1 vuelta por segundo (200 pasos/vuelta × 2 toggles/paso = 400 Hz para 1 vuelta/s, pero ajustamos a 360 para compensar ineficiencias)
+	Stepper_SetSteps(&motor, 360);
 	Stepper_SetSpeed(&motor, 60);  // 60 RPM para prueba
 	HAL_StatusTypeDef test_status = Stepper_Start(&motor);
 	if (test_status != HAL_OK) {
@@ -187,7 +187,6 @@ void StartDriverTask(void *argument) {
 	
 	// ===== LOOP PRINCIPAL =====
 	// Esperar RPM desde ControlTask (Queue3_PosHandle)
-	// Flujo: PC -> InputHID (grados) -> Queue1 -> ControlTask (calcula RPM) -> Queue3 -> DriverTask
 	for(;;){	
 		xStatus = xQueueReceive(Queue3_PosHandle, &rpm_from_control, portMAX_DELAY);
 		
@@ -301,8 +300,7 @@ void StartSensorTask(void *argument) {
 
                 // Guardamos los valores filtrados en la estructura local y global
                 sensor_local.total_ticks = posicion_absoluta_filtrada;
-                //sensor_data.total_ticks_filtrados = posicion_absoluta_filtrada; // Opcional, si querés trackear el filtrado separado
-
+            
                 sensor_data.raw_position = current_raw;
                 sensor_local.raw_position = current_raw;
 
@@ -326,7 +324,7 @@ void StartSensorTask(void *argument) {
 
                 xSemaphoreGive(Sem3_Mutex_Sensor);
 
-                // 6. Despertar a ControlTask y OutputHIDTask con datos limpios cada 1ms
+                // 6. Despertar a ControlTask y OutputHIDTask con datos limpios cada 3ms
                 xStatus = xQueueSendToBack(Queue2_SensorControl, &sensor_local, 0);
                 if(xStatus == pdFAIL) { ERROR_TASK(TASK_SENSOR); }
                 
@@ -377,7 +375,6 @@ void StartControlTask(void *argument) {
 			// Reiniciar PID con el nuevo setpoint para evitar overshoot
 			PIDController_Reset(&pid);
 		}
-		int64_t DEADBAND_TICKS = 5; // Zona muerta de 10 ticks (ajustable según la resolución y el comportamiento deseado)
 		
 		// Calcular posición actual en ticks (multivuelta)
 		current_ticks =  sensor_local.total_ticks;

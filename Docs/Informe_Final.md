@@ -26,7 +26,7 @@ Implementar un servo-motor de posición basado en un motor paso a paso, controla
 - **Latencia de respuesta:** tiempo entre llegada de un comando USB-HID y actualización del movimiento del motor acotado y consistente.
 - **Eficiencia de concurrencia:** lazo de control PID operando a 3 ms de período sin que la comunicación USB o el monitoreo provoquen incumplimientos de plazo.
 - **Estabilidad dinámica:** eliminación de la oscilación sostenida mediante filtrado de la señal de posición y zona muerta (deadband) dimensionada según la resolución física del actuador.
-- **Supervisión:** manejador de errores capaz de desenergizar el motor y señalizar por LED qué tarea originó la falla.
+- **Supervisión:** manejador de errores capaz de señalizar por LED qué tarea originó la falla.
 
 ---
 
@@ -43,7 +43,7 @@ El sistema opera como un servo-motor de lazo cerrado. La PC envía un setpoint d
 - Telemetría — posición absoluta en grados, velocidad en RPM, cantidad de rotaciones y status del sistema, enviados por USB-HID (IN report).
 - LEDs de estado — señalización de actividad y fallas mediante el manejador de errores de Monitor_Task.
 
-*[Insertar diagrama de bloques general aquí]*
+![Diagrama de bloques general](img/imagen_general.png)
 
 ---
 
@@ -66,14 +66,14 @@ El firmware se estructura en seis tareas FreeRTOS interconectadas por colas, un 
 ### Sincronización y Comunicación (IPC)
 
 - **Notificaciones de tarea (xTaskNotifyFromISR):** despiertan a Sensor_Task al completarse la transferencia DMA del I2C, y a Input_HID_Task al llegar un reporte HID. Reemplazan a los semáforos binarios del diseño original por tener menor sobrecarga al no requerir una estructura independiente en el heap de FreeRTOS.
-- **Mutex:** protege la copia de la estructura de datos del sensor (posición/ángulo/vueltas) entre Sensor_Task y las tareas consumidoras, evitando lecturas inconsistentes durante la actualización del dato filtrado.
+- **Mutex:** protege la copia de la estructura de datos del sensor (posición/ángulo/vueltas) dentro de Sensor_Task, evitando lecturas inconsistentes durante la actualización del dato para monitorizar y debbugear.
 - **Colas (Queues):** Queue1_ComHandle (int32_t) transporta el setpoint de posición desde Input_HID_Task hacia Control_Task. Queue2_SensorControl (EncoderData_t) transporta el dato completo del sensor desde Sensor_Task hacia Control_Task. Queue4_SensorOutputHID (EncoderData_t) transporta el mismo tipo de dato desde Sensor_Task hacia Output_HID_Task para la telemetría. Queue3_PosHandle (int32_t) transporta el comando calculado por Control_Task hacia Driver_Task.
 
 ### Manejo de Interrupciones (ISRs)
 
 El evento de adquisición del sensor está gobernado por un software timer de FreeRTOS configurado a un período de 3 ms. Al vencer dicho timer, se inicia la transferencia DMA del bus I2C hacia el AS5600. La interrupción de "DMA Transfer Complete" notifica a Sensor_Task (vía xTaskNotifyFromISR), momento en el cual la CPU retoma el dato ya disponible en RAM sin haber estado bloqueada durante la transferencia. Las interrupciones del endpoint USB (recepción de OUT report) notifican de forma análoga a Input_HID_Task.
 
-*[Insertar diagrama de tareas e IPC aquí]*
+![Diagrama de tareas e IPC](img/diagrama_de_tareas.png)
 
 ---
 
@@ -95,7 +95,7 @@ La tercera fue aislar Monitor_Task en la prioridad más baja del sistema. Las ta
 
 El mecanismo de paso de datos entre tareas se eligió usando colas de FreeRTOS en lugar de variables globales protegidas por mutex para cada transferencia de dato. La razón principal es que las colas evitan condiciones de carrera entre el productor y el consumidor sin necesidad de adquirir explícitamente un mutex en cada acceso: el mecanismo de cola garantiza la atomicidad de la operación de enqueue/dequeue internamente.
 
-Cada cola conecta exactamente un productor con un consumidor y transporta un tipo de dato específico, lo que hace explícito en el código el flujo de información entre tareas. El único lugar donde se usa mutex en lugar de cola es para la estructura compartida de datos del sensor (EncoderData_t accedida por múltiples consumidores), donde un mutex es más apropiado que duplicar la misma cola hacia cada tarea consumidora.
+Cada cola conecta exactamente un productor con un consumidor y transporta un tipo de dato específico, lo que hace explícito en el código el flujo de información entre tareas.
 
 ### 5.3 Notificaciones de tarea en lugar de semáforos binarios
 
@@ -199,7 +199,6 @@ Las pruebas se realizaron en dos etapas. Primero, cada tarea se validó de forma
 - **Timer de generación de pasos (STEP):** PWM con CCR fijo en 10 y ARR variable; movimiento del motor validado en 1/2 paso a distintas velocidades.
 - **GPIO de dirección (DIR) y microstepping (M0-M2):** validados en configuración fija de 1/2 paso.
 - **USB-HID (Input y Output):** comunicación bidireccional validada; envío de setpoints desde la PC y recepción de telemetría (posición absoluta, velocidad, rotaciones, status) en tiempo real.
-- **GPIO de ENABLE del driver:** gestionado por Monitor_Task con manejador de errores capaz de desenergizar el motor y señalizar por LED qué tarea originó la falla.
 
 ### Problemas resueltos durante el desarrollo
 

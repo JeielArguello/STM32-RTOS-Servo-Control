@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define DEADBAND_TICKS  5
+
 // Las funciones auxiliares definidas como macros puras
 #define _constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
 #define _isset(val) ((val) != 0)
