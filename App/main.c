@@ -62,10 +62,10 @@ static void *reader_thread(void *arg)
                 memcpy(&telemetry, report, sizeof(telemetry));
 
                 pthread_mutex_lock(&g_status_mutex);
-                g_motor_status.position = telemetry.position;
+                g_motor_status.position = -telemetry.position;
                 g_motor_status.velocity = telemetry.velocity;
                 g_motor_status.status_flags = telemetry.status_flags;
-                g_motor_status.rotations = telemetry.rotations;
+                g_motor_status.rotations = -telemetry.rotations;
                 g_motor_status.last_update = time(NULL);
                 g_motor_status.updated = 1;
                 pthread_mutex_unlock(&g_status_mutex);
@@ -168,7 +168,7 @@ static int parse_input(const char *line, int32_t *position, int32_t *velocity)
     // Try to parse as position
     char *endptr = NULL;
     long pos = strtol(line, &endptr, 10);
-    if (endptr != line && pos >= -900 && pos <= 900) {
+    if (endptr != line && pos >= -360 && pos <= 360) {
         *position = (int32_t)pos;
         return 0;  // Position command
     }

@@ -17,11 +17,11 @@
 // Macro para convertir microsegundos a ticks de FreeRTOS
 #define pdUS_TO_TICKS(us) ((TickType_t)(((uint64_t)(us) * configTICK_RATE_HZ) / 1000000UL))
 
-DebugStats_t debug_stats = {0};
-EncoderData_t sensor_data = {0};
 Stepper_Handler motor = {0};
 
 // ========== VARIABLES GLOBALES DE DEBUG ==========
+DebugStats_t debug_stats = {0};
+EncoderData_t sensor_data = {0};
 TaskID_t current_error_task = TASK_UNKNOWN;
 TaskHandle_t current_error_task_handle = NULL;
 uint32_t error_line = 0;
@@ -199,11 +199,11 @@ void StartDriverTask(void *argument) {
 			if(rpm_from_control == 0) {
 				Stepper_Stop(&motor);
 			} else {
-				// Setear velocidad en RPM (la conversión a Hz ocurre dentro de Stepper_SetSpeed)
+				// Setear velocidad en RPM 
 				Stepper_SetSpeed(&motor, rpm_from_control);
 				
 				// Arrancar motor
-				if (!motor.is_running) {  // Solo llamar Start si el motor no está corriendo (evitar reiniciar el timer innecesariamente)
+				if (!motor.is_running) {  // Solo llamar Start si el motor no está corriendo
 					Stepper_SetSteps(&motor, 100);  
 					test_status = Stepper_Start(&motor);
 					if (test_status != HAL_OK) {
@@ -216,16 +216,17 @@ void StartDriverTask(void *argument) {
 }
 
 void StartSensorTask(void *argument) {
+
     uint16_t prev_raw_position = 0;
     uint16_t current_raw = 0;
     int32_t diff = 0;
     int64_t pos_temp = 0;
     
-    // El filtro necesita mantener su estado en el tiempo
     int32_t posicion_absoluta_filtrada = 0; 
     uint8_t primer_ciclo = 1;
 
     EncoderData_t sensor_local;
+	
     BaseType_t xStatus;
 
 	// inicializar sensor
